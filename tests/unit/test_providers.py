@@ -33,7 +33,7 @@ def marketdata(*rows):
 def test_moex_returns_inconclusive_on_missing_value(mock_open):
     claim = Claim(
         text="SBER is listed",
-        type="entity_existence",
+        type="price",
         ticker="SBER",
         value=None,
         currency="RUB",
@@ -48,7 +48,7 @@ def test_moex_returns_inconclusive_on_missing_value(mock_open):
 def test_coingecko_returns_inconclusive_on_missing_value(mock_open):
     claim = Claim(
         text="BTC exists",
-        type="entity_existence",
+        type="price",
         ticker="bitcoin",
         value=None,
         currency="USD",
@@ -60,9 +60,40 @@ def test_coingecko_returns_inconclusive_on_missing_value(mock_open):
 
 
 @patch("urllib.request.urlopen")
+def test_moex_rejects_non_price_claim(mock_open):
+    claim = Claim(
+        text="FakeTech exists",
+        type="entity_existence",
+        ticker="FAKETECH",
+        value=None,
+    )
+    result = moex.verify_claim(claim)
+    assert result.status == "E4_OUT_OF_SCOPE"
+    assert result.details["reason"] == "NOT_A_PRICE_CLAIM"
+    mock_open.assert_not_called()
+
+
+@patch("urllib.request.urlopen")
+def test_coingecko_rejects_non_price_claim(mock_open):
+    claim = Claim(
+        text="FakeTech exists",
+        type="entity_existence",
+        ticker="faketech",
+        value=None,
+    )
+    result = coingecko.verify_claim(claim)
+    assert result.status == "E4_OUT_OF_SCOPE"
+    assert result.details["reason"] == "NOT_A_PRICE_CLAIM"
+    mock_open.assert_not_called()
+
+
+@patch("urllib.request.urlopen")
 def test_moex_valid_raw_capture_sha256(mock_open):
-    mock_open.return_value = response(securities(["SBER"]))
-    result = moex.verify_claim(Claim("SBER exists", "exists", "SBER", None, "RUB"))
+    mock_open.side_effect = [
+        response(securities(["SBER"])),
+        response(marketdata(["SBER", 100.0, "TQBR", "2026-11-19"])),
+    ]
+    result = moex.verify_claim(Claim("SBER 100 RUB", "price", "SBER", 100, "RUB"))
     assert result.status == moex.E4_VERIFIED and result.raw_evidence
     raw = base64.b64decode(result.raw_evidence[0]["raw_body_base64"])
     assert hashlib.sha256(raw).hexdigest() == result.sha256[0]
@@ -81,13 +112,13 @@ def test_moex_contradicted_price(mock_open):
 @patch("urllib.request.urlopen")
 def test_moex_out_of_scope_unavailable_and_malformed(mock_open):
     mock_open.return_value = response(securities())
-    result = moex.verify_claim(Claim("unknown", "exists", "NOPE", None, "RUB"))
+    result = moex.verify_claim(Claim("unknown", "price", "NOPE", 100, "RUB"))
     assert result.status == moex.E4_OUT_OF_SCOPE
     mock_open.side_effect = urllib.error.URLError("offline")
-    assert moex.verify_claim(Claim("SBER", "exists", "SBER", None)).status == moex.E4_INCONCLUSIVE
+    assert moex.verify_claim(Claim("SBER", "price", "SBER", 100)).status == moex.E4_INCONCLUSIVE
     mock_open.side_effect = None
     mock_open.return_value = response([])
-    assert moex.verify_claim(Claim("SBER", "exists", "SBER", None)).status == moex.E4_INCONCLUSIVE
+    assert moex.verify_claim(Claim("SBER", "price", "SBER", 100)).status == moex.E4_INCONCLUSIVE
 
 
 @patch("urllib.request.urlopen")
@@ -118,12 +149,12 @@ def test_coingecko_out_of_scope_unavailable_and_malformed(mock_open):
     mock_open.side_effect = urllib.error.HTTPError(
         "https://api.coingecko.com", 503, "Unavailable", {}, io.BytesIO(b"down")
     )
-    unavailable = coingecko.verify_claim(Claim("BTC exists", "existence", "bitcoin", None))
+    unavailable = coingecko.verify_claim(Claim("BTC price", "price", "bitcoin", 10))
     assert unavailable.status == coingecko.E4_INCONCLUSIVE
     assert unavailable.raw_evidence[0]["status_code"] == 503
     mock_open.side_effect = None
     mock_open.return_value = response([])
-    malformed = coingecko.verify_claim(Claim("BTC exists", "existence", "bitcoin", None))
+    malformed = coingecko.verify_claim(Claim("BTC price", "price", "bitcoin", 10))
     assert malformed.status == coingecko.E4_INCONCLUSIVE
 
 

@@ -127,6 +127,12 @@ def _verify_claim_with_moex(
     Returns one of E4_VERIFIED, E4_CONTRADICTED, E4_OUT_OF_SCOPE, or
     E4_INCONCLUSIVE together with bounded source evidence.
     """
+    if claim_type != "price":
+        return E4_OUT_OF_SCOPE, {
+            "reason": "NOT_A_PRICE_CLAIM",
+            "claim_type": claim_type,
+            "checked_source": "moex.iss",
+        }
     if claimed_value is None:
         return E4_INCONCLUSIVE, {
             "reason": "MISSING_VALUE_INTERNAL",
@@ -365,6 +371,8 @@ def verify_claim_with_moex(
 
 def verify_claim(claim: Jamp2Claim) -> ProviderResult:
     """Verify a manually constructed claim and retain every raw MOEX response."""
+    if claim.type != "price":
+        return ProviderResult(E4_OUT_OF_SCOPE, {"reason": "NOT_A_PRICE_CLAIM"})
     if claim.value is None:
         return ProviderResult(E4_INCONCLUSIVE, {"reason": "MISSING_VALUE"})
     if claim.type == "price" and claim.currency not in {None, "RUB"}:

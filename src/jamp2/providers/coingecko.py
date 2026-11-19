@@ -113,6 +113,12 @@ def _verify_claim_with_coingecko(
     for price and 20% for market capitalization. A missing coin contradicts an
     existence claim; for numeric claims, a missing coin is out of scope.
     """
+    if claim_type != "price":
+        return E4_OUT_OF_SCOPE, {
+            "reason": "NOT_A_PRICE_CLAIM",
+            "claim_type": claim_type,
+            "checked_source": "coingecko",
+        }
     if claimed_value is None:
         return E4_INCONCLUSIVE, {
             "reason": "MISSING_VALUE_INTERNAL",
@@ -305,6 +311,8 @@ def verify_claim_with_coingecko(
 
 def verify_claim(claim: Jamp2Claim) -> ProviderResult:
     """Verify a manually constructed claim and retain the exact CoinGecko response."""
+    if claim.type != "price":
+        return ProviderResult(E4_OUT_OF_SCOPE, {"reason": "NOT_A_PRICE_CLAIM"})
     if claim.value is None:
         return ProviderResult(E4_INCONCLUSIVE, {"reason": "MISSING_VALUE"})
     claim_type = "existence" if claim.type == "exists" else claim.type
