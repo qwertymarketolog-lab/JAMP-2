@@ -293,6 +293,8 @@ def verify_claim_with_coingecko(
 
 def verify_claim(claim: Jamp2Claim) -> ProviderResult:
     """Verify a manually constructed claim and retain the exact CoinGecko response."""
+    if claim.value is None:
+        return ProviderResult(E4_INCONCLUSIVE, {"reason": "MISSING_VALUE"})
     claim_type = "existence" if claim.type == "exists" else claim.type
     if claim_type in {"price", "market_cap"} and claim.currency not in {None, "USD"}:
         return ProviderResult(

@@ -360,6 +360,8 @@ def verify_claim_with_moex(
 
 def verify_claim(claim: Jamp2Claim) -> ProviderResult:
     """Verify a manually constructed claim and retain every raw MOEX response."""
+    if claim.value is None:
+        return ProviderResult(E4_INCONCLUSIVE, {"reason": "MISSING_VALUE"})
     if claim.type == "price" and claim.currency not in {None, "RUB"}:
         return ProviderResult(
             E4_OUT_OF_SCOPE,

@@ -30,6 +30,36 @@ def marketdata(*rows):
 
 
 @patch("urllib.request.urlopen")
+def test_moex_returns_inconclusive_on_missing_value(mock_open):
+    claim = Claim(
+        text="SBER is listed",
+        type="entity_existence",
+        ticker="SBER",
+        value=None,
+        currency="RUB",
+    )
+    result = moex.verify_claim(claim)
+    assert result.status == "E4_INCONCLUSIVE"
+    assert result.details["reason"] == "MISSING_VALUE"
+    mock_open.assert_not_called()
+
+
+@patch("urllib.request.urlopen")
+def test_coingecko_returns_inconclusive_on_missing_value(mock_open):
+    claim = Claim(
+        text="BTC exists",
+        type="entity_existence",
+        ticker="bitcoin",
+        value=None,
+        currency="USD",
+    )
+    result = coingecko.verify_claim(claim)
+    assert result.status == "E4_INCONCLUSIVE"
+    assert result.details["reason"] == "MISSING_VALUE"
+    mock_open.assert_not_called()
+
+
+@patch("urllib.request.urlopen")
 def test_moex_valid_raw_capture_sha256(mock_open):
     mock_open.return_value = response(securities(["SBER"]))
     result = moex.verify_claim(Claim("SBER exists", "exists", "SBER", None, "RUB"))
