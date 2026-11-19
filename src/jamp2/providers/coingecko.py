@@ -113,6 +113,11 @@ def _verify_claim_with_coingecko(
     for price and 20% for market capitalization. A missing coin contradicts an
     existence claim; for numeric claims, a missing coin is out of scope.
     """
+    if claimed_value is None:
+        return E4_INCONCLUSIVE, {
+            "reason": "MISSING_VALUE_INTERNAL",
+            "checked_source": "coingecko",
+        }
     normalized_id = coin_id.strip().lower() if isinstance(coin_id, str) else ""
     if (
         not normalized_id

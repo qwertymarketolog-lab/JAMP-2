@@ -127,6 +127,11 @@ def _verify_claim_with_moex(
     Returns one of E4_VERIFIED, E4_CONTRADICTED, E4_OUT_OF_SCOPE, or
     E4_INCONCLUSIVE together with bounded source evidence.
     """
+    if claimed_value is None:
+        return E4_INCONCLUSIVE, {
+            "reason": "MISSING_VALUE_INTERNAL",
+            "checked_source": "moex.iss",
+        }
     normalized_ticker = ticker.strip().upper() if isinstance(ticker, str) else ""
     if not normalized_ticker or not normalized_ticker.replace(".", "").replace("-", "").isalnum():
         return E4_INCONCLUSIVE, {
