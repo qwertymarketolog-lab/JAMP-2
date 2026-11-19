@@ -73,12 +73,13 @@ def build_router(ledger: EvidenceLedger) -> APIRouter:
                 content={"error": "INVALID_RAW_BODY_BASE64"},
             )
         captured_at = payload.captured_at_utc
-        if captured_at.tzinfo is None or captured_at.utcoffset() is None:
+        if captured_at.tzinfo is None:
             return JSONResponse(
                 status_code=422,
                 content={"error": "CAPTURE_TIME_MUST_BE_UTC"},
             )
-        if captured_at.utcoffset().total_seconds() != 0:
+        offset = captured_at.utcoffset()
+        if offset is None or offset.total_seconds() != 0:
             return JSONResponse(
                 status_code=422,
                 content={"error": "CAPTURE_TIME_MUST_BE_UTC"},

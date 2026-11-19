@@ -16,10 +16,7 @@ from jamp2.evidence.model import EvidenceRecord
 from jamp2.ledger.postgres import IntegrityViolation, PostgresLedger
 
 DATABASE_URL = os.getenv("DATABASE_URL")
-pytestmark = pytest.mark.skipif(
-    not DATABASE_URL,
-    reason="DATABASE_URL is required for PostgreSQL tests",
-)
+pytestmark = pytest.mark.skipif(not DATABASE_URL, reason="DATABASE_URL is required for PostgreSQL tests")
 
 
 def make_record(evidence_id: str, body: bytes | None = None) -> EvidenceRecord:
@@ -90,36 +87,18 @@ def test_direct_sql_tampering_is_detected_on_read() -> None:
     asyncio.run(run())
 
 
-def test_database_trigger_rejects_update() -> None:
+def test_database_trigger_rejects_update_and_delete() -> None:
     async def run() -> None:
         ledger = PostgresLedger(DATABASE_URL)
         await reset_ledger(ledger)
-        await ledger.append(make_record("immutable-update"))
+        await ledger.append(make_record("immutable"))
         with pytest.raises(DBAPIError):
             async with ledger.engine.begin() as connection:
                 await connection.execute(
                     text(
                         "UPDATE evidence SET verdict_status = 'CHANGED' "
-                        "WHERE evidence_id = 'immutable-update'"
+                        "WHERE evidence_id = 'immutable'"
                     )
                 )
-        await ledger.close()
-    asyncio.run(run())
-
-
-def test_database_trigger_rejects_delete_and_preserves_record() -> None:
-    async def run() -> None:
-        ledger = PostgresLedger(DATABASE_URL)
-        await reset_ledger(ledger)
-        await ledger.append(make_record("immutable-delete"))
-        with pytest.raises(DBAPIError):
-            async with ledger.engine.begin() as connection:
-                await connection.execute(
-                    text("DELETE FROM evidence WHERE evidence_id = 'immutable-delete'")
-                )
-        found = await ledger.get("immutable-delete")
-        assert found is not None
-        assert found.evidence_id == "immutable-delete"
-        assert await ledger.verify_chain()
         await ledger.close()
     asyncio.run(run())

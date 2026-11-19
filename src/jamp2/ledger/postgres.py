@@ -15,6 +15,7 @@ from sqlalchemy import (
     LargeBinary,
     String,
     Text,
+    insert,
     select,
     text,
 )
@@ -95,11 +96,13 @@ class PostgresLedger:
         *,
         engine: AsyncEngine | None = None,
     ) -> None:
-        url = database_url or os.getenv(
-            "DATABASE_URL",
-            "postgresql+asyncpg://jamp2:jamp2@localhost:5432/jamp2",
-        )
-        self.engine = engine or create_async_engine(url, pool_pre_ping=True)
+        if engine is not None:
+            self.engine = engine
+            return
+        url = database_url or os.getenv("DATABASE_URL")
+        if not url:
+            raise ValueError("DATABASE_URL is not set")
+        self.engine = create_async_engine(url, pool_pre_ping=True)
 
     async def append(self, record: EvidenceRecord) -> EvidenceRecord:
         """Atomically link and append a record; parent_hash is assigned by the ledger."""
@@ -125,7 +128,7 @@ class PostgresLedger:
                 linked_record = replace(record, parent_hash=parent_hash)
                 record_hash = compute_record_hash(linked_record)
                 await connection.execute(
-                    EvidenceRow.__table__.insert().values(
+                    insert(EvidenceRow).values(
                         evidence_id=linked_record.evidence_id,
                         claim_id=linked_record.claim_id,
                         provider=linked_record.provider,
