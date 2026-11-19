@@ -5,8 +5,10 @@ from jamp2.domain.verdict import (
     critical_unverified_claims,
 )
 
+
 def test_claim_is_manual_and_extractor_independent():
     assert Claim("SBER 300 RUB", "price", "SBER", 300, "RUB", True).ticker == "SBER"
+
 
 def test_aggregate_precedence_and_fail_closed():
     assert aggregate_verdict([]) == "PARTIAL"
@@ -19,12 +21,14 @@ def test_aggregate_precedence_and_fail_closed():
     assert aggregate_verdict([{"status": "E4_OUT_OF_SCOPE", "critical": True}]) == "INCONCLUSIVE"
     assert aggregate_verdict([{"status": "E4_INCONCLUSIVE", "critical": False}]) == "PARTIAL"
 
+
 def test_critical_unverified_claims():
     rows = [
         {"text": "unknown", "critical": True, "status": "E4_INCONCLUSIVE"},
         {"text": "ok", "critical": True, "status": "E4_VERIFIED"},
     ]
     assert critical_unverified_claims(rows) == ["unknown"]
+
 
 def test_hmac_round_trip_wrong_key_and_tampering():
     item = JampVerdict(
@@ -38,6 +42,7 @@ def test_hmac_round_trip_wrong_key_and_tampering():
     assert JampVerdict.from_dict(signed.to_dict()).verify("secret")
     tampered = JampVerdict.from_dict({**signed.to_dict(), "trace_id": "trace-2"})
     assert not tampered.verify("secret")
+
 
 def test_empty_secret_rejected():
     item = JampVerdict("trace", "INCONCLUSIVE", None, "sha256:x", 1.0)

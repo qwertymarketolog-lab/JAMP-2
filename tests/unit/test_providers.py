@@ -8,14 +8,17 @@ from unittest.mock import MagicMock, patch
 from jamp2.domain.claim import Claim
 from jamp2.providers import coingecko, moex
 
+
 def response(payload):
     item = MagicMock()
     item.read.return_value = json.dumps(payload).encode()
     item.status = 200
     return MagicMock(__enter__=MagicMock(return_value=item))
 
+
 def securities(*rows):
     return {"securities": {"columns": ["secid"], "data": list(rows)}}
+
 
 def marketdata(*rows):
     return {
@@ -25,6 +28,7 @@ def marketdata(*rows):
         }
     }
 
+
 @patch("urllib.request.urlopen")
 def test_moex_valid_raw_capture_sha256(mock_open):
     mock_open.return_value = response(securities(["SBER"]))
@@ -32,6 +36,7 @@ def test_moex_valid_raw_capture_sha256(mock_open):
     assert result.status == moex.E4_VERIFIED and result.raw_evidence
     raw = base64.b64decode(result.raw_evidence[0]["raw_body_base64"])
     assert hashlib.sha256(raw).hexdigest() == result.sha256[0]
+
 
 @patch("urllib.request.urlopen")
 def test_moex_contradicted_price(mock_open):
@@ -41,6 +46,7 @@ def test_moex_contradicted_price(mock_open):
     ]
     result = moex.verify_claim(Claim("SBER 5000 RUB", "price", "SBER", 5000, "RUB"))
     assert result.status == moex.E4_CONTRADICTED and len(result.raw_evidence) == 2
+
 
 @patch("urllib.request.urlopen")
 def test_moex_out_of_scope_unavailable_and_malformed(mock_open):
@@ -53,6 +59,7 @@ def test_moex_out_of_scope_unavailable_and_malformed(mock_open):
     mock_open.return_value = response([])
     assert moex.verify_claim(Claim("SBER", "exists", "SBER", None)).status == moex.E4_INCONCLUSIVE
 
+
 @patch("urllib.request.urlopen")
 def test_coingecko_valid_capture_and_sha256(mock_open):
     mock_open.return_value = response({"bitcoin": {"usd": 67000}})
@@ -61,6 +68,7 @@ def test_coingecko_valid_capture_and_sha256(mock_open):
     raw = base64.b64decode(result.raw_evidence[0]["raw_body_base64"])
     assert hashlib.sha256(raw).hexdigest() == result.sha256[0]
 
+
 @patch("urllib.request.urlopen")
 def test_coingecko_contradicted(mock_open):
     mock_open.return_value = response({"bitcoin": {"usd": 67000}})
@@ -68,6 +76,7 @@ def test_coingecko_contradicted(mock_open):
         Claim("BTC 100000 USD", "price", "bitcoin", 100000, "USD")
     )
     assert result.status == coingecko.E4_CONTRADICTED
+
 
 @patch("urllib.request.urlopen")
 def test_coingecko_out_of_scope_unavailable_and_malformed(mock_open):
@@ -86,6 +95,7 @@ def test_coingecko_out_of_scope_unavailable_and_malformed(mock_open):
     mock_open.return_value = response([])
     malformed = coingecko.verify_claim(Claim("BTC exists", "existence", "bitcoin", None))
     assert malformed.status == coingecko.E4_INCONCLUSIVE
+
 
 def test_currency_mismatch_is_out_of_scope_without_http():
     with patch("urllib.request.urlopen") as mock_open:

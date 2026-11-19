@@ -4,9 +4,11 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass
 from typing import Any
 
+
 @dataclass(frozen=True)
 class Claim:
     """A manually constructed claim; extraction is deliberately outside this package."""
+
     text: str
     type: str
     ticker: str
