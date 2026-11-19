@@ -9,7 +9,7 @@ import pytest
 
 from jamp2.evidence.canonicalize import canonicalize
 from jamp2.evidence.digest import compute_record_hash, compute_sha256
-from jamp2.evidence.model import EvidenceRecord
+from jamp2.evidence.model import EvidenceRecord, JSONValue
 from jamp2.ledger.repository import InMemoryLedger
 
 

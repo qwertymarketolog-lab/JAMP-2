@@ -28,7 +28,15 @@ class EvidenceRecord:
     parent_hash: str | None
 
     def __post_init__(self) -> None:
-        for field_name in ("evidence_id", "claim_id", "provider", "url", "raw_sha256", "verdict_status"):
+        required_strings = (
+            "evidence_id",
+            "claim_id",
+            "provider",
+            "url",
+            "raw_sha256",
+            "verdict_status",
+        )
+        for field_name in required_strings:
             value = getattr(self, field_name)
             if not isinstance(value, str) or not value.strip():
                 raise ValueError(f"{field_name} must be a non-empty string")
