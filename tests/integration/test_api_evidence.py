@@ -13,10 +13,13 @@ from sqlalchemy import text
 
 from jamp2.api.app import create_app
 from jamp2.evidence.digest import compute_sha256
-from jamp2.ledger.postgres import IntegrityViolation, LedgerUnavailable, PostgresLedger
+from jamp2.ledger.postgres import LedgerUnavailable, PostgresLedger
 
 DATABASE_URL = os.getenv("DATABASE_URL")
-pytestmark = pytest.mark.skipif(not DATABASE_URL, reason="DATABASE_URL is required for API integration tests")
+pytestmark = pytest.mark.skipif(
+    not DATABASE_URL,
+    reason="DATABASE_URL is required for API integration tests",
+)
 
 
 def payload(evidence_id: str) -> dict[str, object]:
