@@ -225,6 +225,13 @@ def _verify_claim_with_coingecko(
             "name": payload.get("name"),
             "symbol": payload.get("symbol"),
         }
+    if threshold is None:
+        return E4_INCONCLUSIVE, {
+            "reason": "INVALID_THRESHOLD_PCT",
+            "claim_type": claim_type,
+            "threshold_pct": threshold_pct,
+            "checked_source": "coingecko",
+        }
     if claim_type == "price":
         coin_data = payload.get(normalized_id)
         observed_value = coin_data.get("usd") if isinstance(coin_data, dict) else None
