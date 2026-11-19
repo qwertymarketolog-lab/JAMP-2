@@ -7,7 +7,8 @@ import binascii
 from datetime import UTC
 from typing import Protocol
 
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, status
+from fastapi.responses import JSONResponse
 
 from jamp2.api.schemas import EvidenceCreate
 from jamp2.evidence.digest import compute_record_hash
@@ -18,9 +19,6 @@ from jamp2.ledger.postgres import DuplicateEvidence, IntegrityViolation, LedgerU
 class EvidenceLedger(Protocol):
     async def append(self, record: EvidenceRecord) -> EvidenceRecord: ...
     async def get(self, evidence_id: str) -> EvidenceRecord | None: ...
-
-
-router = APIRouter(prefix="/v1/evidence", tags=["evidence"])
 
 
 def _serialize(record: EvidenceRecord) -> dict[str, object]:
@@ -40,39 +38,51 @@ def _serialize(record: EvidenceRecord) -> dict[str, object]:
     }
 
 
-def _raise_ledger_error(exc: Exception) -> None:
+def _ledger_error(exc: Exception) -> JSONResponse:
     if isinstance(exc, DuplicateEvidence):
-        raise HTTPException(
+        return JSONResponse(
             status_code=status.HTTP_409_CONFLICT,
-            detail={"error": "EVIDENCE_ALREADY_EXISTS"},
-        ) from exc
+            content={"error": "EVIDENCE_ALREADY_EXISTS"},
+        )
     if isinstance(exc, LedgerUnavailable):
-        raise HTTPException(
+        return JSONResponse(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail={"error": "LEDGER_UNAVAILABLE"},
-        ) from exc
+            content={"error": "LEDGER_UNAVAILABLE"},
+        )
     if isinstance(exc, IntegrityViolation):
-        raise HTTPException(
+        return JSONResponse(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail={"error": "INTEGRITY_VIOLATION"},
-        ) from exc
+            content={"error": "INTEGRITY_VIOLATION"},
+        )
     raise exc
 
 
 def build_router(ledger: EvidenceLedger) -> APIRouter:
-    """Bind API routes to a ledger implementation."""
+    """Bind a fresh router instance to one ledger implementation."""
+    router = APIRouter(prefix="/v1/evidence", tags=["evidence"])
 
     @router.post("", status_code=status.HTTP_201_CREATED)
-    async def create_evidence(payload: EvidenceCreate) -> dict[str, object]:
+    async def create_evidence(
+        payload: EvidenceCreate,
+    ) -> dict[str, object] | JSONResponse:
         try:
             raw_body = base64.b64decode(payload.raw_body_base64, validate=True)
-        except (binascii.Error, ValueError) as exc:
-            raise HTTPException(status_code=422, detail={"error": "INVALID_RAW_BODY_BASE64"}) from exc
+        except (binascii.Error, ValueError):
+            return JSONResponse(
+                status_code=422,
+                content={"error": "INVALID_RAW_BODY_BASE64"},
+            )
         captured_at = payload.captured_at_utc
         if captured_at.tzinfo is None or captured_at.utcoffset() is None:
-            raise HTTPException(status_code=422, detail={"error": "CAPTURE_TIME_MUST_BE_UTC"})
+            return JSONResponse(
+                status_code=422,
+                content={"error": "CAPTURE_TIME_MUST_BE_UTC"},
+            )
         if captured_at.utcoffset().total_seconds() != 0:
-            raise HTTPException(status_code=422, detail={"error": "CAPTURE_TIME_MUST_BE_UTC"})
+            return JSONResponse(
+                status_code=422,
+                content={"error": "CAPTURE_TIME_MUST_BE_UTC"},
+            )
         record = EvidenceRecord(
             evidence_id=payload.evidence_id,
             claim_id=payload.claim_id,
@@ -89,19 +99,19 @@ def build_router(ledger: EvidenceLedger) -> APIRouter:
         try:
             stored = await ledger.append(record)
         except (DuplicateEvidence, IntegrityViolation, LedgerUnavailable) as exc:
-            _raise_ledger_error(exc)
+            return _ledger_error(exc)
         return _serialize(stored)
 
     @router.get("/{evidence_id}")
-    async def read_evidence(evidence_id: str) -> dict[str, object]:
+    async def read_evidence(evidence_id: str) -> dict[str, object] | JSONResponse:
         try:
             record = await ledger.get(evidence_id)
         except (DuplicateEvidence, IntegrityViolation, LedgerUnavailable) as exc:
-            _raise_ledger_error(exc)
+            return _ledger_error(exc)
         if record is None:
-            raise HTTPException(
+            return JSONResponse(
                 status_code=status.HTTP_404_NOT_FOUND,
-                detail={"error": "EVIDENCE_NOT_FOUND"},
+                content={"error": "EVIDENCE_NOT_FOUND"},
             )
         return _serialize(record)
 

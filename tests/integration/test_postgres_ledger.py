@@ -36,16 +36,15 @@ def make_record(evidence_id: str, body: bytes | None = None) -> EvidenceRecord:
     )
 
 
-def reset_ledger(ledger: PostgresLedger) -> None:
-    async def run() -> None:
-        async with ledger.engine.begin() as connection:
-            await connection.execute(text("TRUNCATE TABLE evidence RESTART IDENTITY"))
-    asyncio.run(run())
+async def reset_ledger(ledger: PostgresLedger) -> None:
+    async with ledger.engine.begin() as connection:
+        await connection.execute(text("TRUNCATE TABLE evidence RESTART IDENTITY"))
 
 
 def test_postgres_append_get_and_restart_persistence() -> None:
     async def run() -> None:
         ledger = PostgresLedger(DATABASE_URL)
+        await reset_ledger(ledger)
         await ledger.append(make_record("persisted-record"))
         await ledger.close()
         restarted = PostgresLedger(DATABASE_URL)
@@ -61,7 +60,7 @@ def test_postgres_append_get_and_restart_persistence() -> None:
 def test_concurrent_appends_are_serialized_into_one_valid_chain() -> None:
     async def run() -> None:
         ledger = PostgresLedger(DATABASE_URL)
-        reset_ledger(ledger)
+        await reset_ledger(ledger)
         stored = await asyncio.gather(
             *(ledger.append(make_record(f"parallel-{index}")) for index in range(10))
         )
@@ -74,7 +73,7 @@ def test_concurrent_appends_are_serialized_into_one_valid_chain() -> None:
 def test_direct_sql_tampering_is_detected_on_read() -> None:
     async def run() -> None:
         ledger = PostgresLedger(DATABASE_URL)
-        reset_ledger(ledger)
+        await reset_ledger(ledger)
         await ledger.append(make_record("tamper-me"))
         async with ledger.engine.begin() as connection:
             await connection.execute(text("SET LOCAL session_replication_role = replica"))
@@ -91,12 +90,15 @@ def test_direct_sql_tampering_is_detected_on_read() -> None:
 def test_database_trigger_rejects_update_and_delete() -> None:
     async def run() -> None:
         ledger = PostgresLedger(DATABASE_URL)
-        reset_ledger(ledger)
+        await reset_ledger(ledger)
         await ledger.append(make_record("immutable"))
         with pytest.raises(DBAPIError):
             async with ledger.engine.begin() as connection:
                 await connection.execute(
-                    text("UPDATE evidence SET verdict_status = 'CHANGED' WHERE evidence_id = 'immutable'")
+                    text(
+                        "UPDATE evidence SET verdict_status = 'CHANGED' "
+                        "WHERE evidence_id = 'immutable'"
+                    )
                 )
         await ledger.close()
     asyncio.run(run())

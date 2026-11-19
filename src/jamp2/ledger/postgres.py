@@ -3,11 +3,21 @@
 from __future__ import annotations
 
 import os
+from collections.abc import Sequence
 from dataclasses import replace
 from datetime import datetime
-from typing import Any
 
-from sqlalchemy import BigInteger, DateTime, Identity, Integer, LargeBinary, String, Text, select, text
+from sqlalchemy import (
+    BigInteger,
+    DateTime,
+    Identity,
+    Integer,
+    LargeBinary,
+    String,
+    Text,
+    select,
+    text,
+)
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
@@ -51,7 +61,7 @@ class EvidenceRow(Base):
     raw_body_bytes: Mapped[bytes] = mapped_column(LargeBinary)
     raw_sha256: Mapped[str] = mapped_column(String(64))
     captured_at_utc: Mapped[datetime] = mapped_column(DateTime(timezone=True))
-    parsed_value: Mapped[dict[str, Any] | list[Any] | str | int | float | bool | None] = mapped_column(JSONB)
+    parsed_value: Mapped[JSONValue] = mapped_column(JSONB)
     verdict_status: Mapped[str] = mapped_column(String(64))
     parent_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
     record_hash: Mapped[str] = mapped_column(String(64))
@@ -103,7 +113,9 @@ class PostgresLedger:
                 )
                 rows = (
                     await connection.execute(
-                        select(EvidenceRow).order_by(EvidenceRow.sequence_id.asc()).with_for_update()
+                        select(EvidenceRow)
+                        .order_by(EvidenceRow.sequence_id.asc())
+                        .with_for_update()
                     )
                 ).scalars().all()
                 self._verify_rows(rows)
@@ -190,7 +202,7 @@ class PostgresLedger:
         await self.engine.dispose()
 
     @staticmethod
-    def _verify_rows(rows: list[EvidenceRow]) -> None:
+    def _verify_rows(rows: Sequence[EvidenceRow]) -> None:
         expected_parent: str | None = None
         seen_ids: set[str] = set()
         for row in rows:
