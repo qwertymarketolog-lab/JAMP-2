@@ -1,0 +1,332 @@
+"""Bounded factual verification against the public CoinGecko API.
+
+This adapter verifies current existence, USD price, and USD market capitalization.
+Historical price movements and predictions are outside its evidence scope.
+"""
+
+from __future__ import annotations
+
+import base64
+import hashlib
+import json
+import math
+import threading
+import time
+import urllib.error
+import urllib.parse
+import urllib.request
+from collections import deque
+from typing import Any
+
+from jamp2.domain.claim import Claim as Jamp2Claim
+from jamp2.providers.base import ProviderResult
+
+COINGECKO_BASE = "https://api.coingecko.com/api/v3"
+E4_VERIFIED = "E4_VERIFIED"
+E4_CONTRADICTED = "E4_CONTRADICTED"
+E4_OUT_OF_SCOPE = "E4_OUT_OF_SCOPE"
+E4_INCONCLUSIVE = "E4_INCONCLUSIVE"
+CACHE_TTL_SECONDS = 60.0
+FREE_TIER_REQUESTS_PER_MINUTE = 30
+REQUEST_TIMEOUT_SECONDS = 5.0
+_DEFAULT_THRESHOLDS = {"price": 10.0, "market_cap": 20.0}
+_CACHE: dict[str, tuple[float, dict[str, Any]]] = {}
+_REQUEST_TIMES: deque[float] = deque()
+_LOCK = threading.Lock()
+
+
+def _get_json(
+    url: str,
+    timeout: float,
+    raw_evidence: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    """Fetch JSON; capture mode bypasses cache so bytes bind to this verdict."""
+    now = time.monotonic()
+    if raw_evidence is None:
+        with _LOCK:
+            cached = _CACHE.get(url)
+            if cached is not None and now - cached[0] < CACHE_TTL_SECONDS:
+                return cached[1]
+            if cached is not None:
+                del _CACHE[url]
+    with _LOCK:
+        while _REQUEST_TIMES and now - _REQUEST_TIMES[0] >= 60.0:
+            _REQUEST_TIMES.popleft()
+        if len(_REQUEST_TIMES) >= FREE_TIER_REQUESTS_PER_MINUTE:
+            raise RuntimeError("LOCAL_RATE_LIMIT")
+        _REQUEST_TIMES.append(now)
+
+    request = urllib.request.Request(
+        url,
+        headers={"Accept": "application/json", "User-Agent": "JAMP-Trust-Layer/1.0"},
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            body = response.read()
+            status_code = getattr(response, "status", 200)
+    except urllib.error.HTTPError as exc:
+        body = exc.read()
+        if raw_evidence is not None:
+            raw_evidence.append({
+                "source": "coingecko",
+                "url": url,
+                "status_code": exc.code,
+                "body_complete": True,
+                "raw_body_base64": base64.b64encode(body).decode("ascii"),
+                "sha256_body": hashlib.sha256(body).hexdigest(),
+            })
+        raise
+    if raw_evidence is not None:
+        raw_evidence.append({
+            "source": "coingecko",
+            "url": url,
+            "status_code": status_code,
+            "body_complete": True,
+            "raw_body_base64": base64.b64encode(body).decode("ascii"),
+            "sha256_body": hashlib.sha256(body).hexdigest(),
+        })
+    payload = json.loads(body.decode("utf-8"))
+    if not isinstance(payload, dict):
+        raise ValueError("CoinGecko response must be a JSON object")
+    if raw_evidence is None:
+        with _LOCK:
+            _CACHE[url] = (time.monotonic(), payload)
+    return payload
+
+
+def _coin_url(coin_id: str) -> str:
+    return f"{COINGECKO_BASE}/coins/{urllib.parse.quote(coin_id, safe='')}"
+
+
+def _verify_claim_with_coingecko(
+    coin_id: str,
+    claim_type: str,
+    claimed_value: float | int | None,
+    threshold_pct: float | None = None,
+    *,
+    timeout: float = REQUEST_TIMEOUT_SECONDS,
+    raw_evidence: list[dict[str, Any]] | None = None,
+) -> tuple[str, dict[str, Any]]:
+    """Verify an explicit CoinGecko claim and return bounded source evidence.
+
+    threshold_pct is expressed as a percentage (10 means 10%). Defaults are 10%
+    for price and 20% for market capitalization. A missing coin contradicts an
+    existence claim; for numeric claims, a missing coin is out of scope.
+    """
+    if claim_type != "price":
+        return E4_OUT_OF_SCOPE, {
+            "reason": "NOT_A_PRICE_CLAIM",
+            "claim_type": claim_type,
+            "checked_source": "coingecko",
+        }
+    if claimed_value is None:
+        return E4_INCONCLUSIVE, {
+            "reason": "MISSING_VALUE_INTERNAL",
+            "checked_source": "coingecko",
+        }
+    normalized_id = coin_id.strip().lower() if isinstance(coin_id, str) else ""
+    if (
+        not normalized_id
+        or len(normalized_id) > 120
+        or not all(char.isalnum() or char in "-_" for char in normalized_id)
+    ):
+        return E4_INCONCLUSIVE, {
+            "reason": "INVALID_COIN_ID",
+            "checked_source": "coingecko",
+            "coin_id": coin_id,
+        }
+    if claim_type == "prediction":
+        return E4_OUT_OF_SCOPE, {
+            "reason": "PREDICTION_NOT_VERIFIABLE_BY_E4",
+            "claim_type": claim_type,
+            "coin_id": normalized_id,
+            "checked_source": "coingecko",
+        }
+    if claim_type not in {"existence", "price", "market_cap"}:
+        return E4_INCONCLUSIVE, {
+            "reason": "UNSUPPORTED_CLAIM_TYPE",
+            "claim_type": claim_type,
+            "coin_id": normalized_id,
+            "checked_source": "coingecko",
+        }
+    if timeout <= 0 or not math.isfinite(timeout):
+        return E4_INCONCLUSIVE, {"reason": "INVALID_TIMEOUT", "checked_source": "coingecko"}
+
+    threshold = _DEFAULT_THRESHOLDS.get(claim_type) if threshold_pct is None else threshold_pct
+    if claim_type in {"price", "market_cap"} and (
+        isinstance(threshold, bool)
+        or not isinstance(threshold, (int, float))
+        or not math.isfinite(float(threshold))
+        or not 0 <= float(threshold) < 100
+    ):
+        return E4_INCONCLUSIVE, {
+            "reason": "INVALID_THRESHOLD_PCT",
+            "claim_type": claim_type,
+            "threshold_pct": threshold_pct,
+            "checked_source": "coingecko",
+        }
+    if claim_type in {"price", "market_cap"} and (
+        isinstance(claimed_value, bool)
+        or not isinstance(claimed_value, (int, float))
+        or not math.isfinite(float(claimed_value))
+        or float(claimed_value) <= 0
+    ):
+        return E4_INCONCLUSIVE, {
+            "reason": "INVALID_CLAIMED_VALUE",
+            "claim_type": claim_type,
+            "claimed_value": claimed_value,
+            "checked_source": "coingecko",
+        }
+
+    if claim_type == "price":
+        params = urllib.parse.urlencode({"ids": normalized_id, "vs_currencies": "usd"})
+        url = f"{COINGECKO_BASE}/simple/price?{params}"
+    else:
+        url = _coin_url(normalized_id)
+
+    try:
+        payload = _get_json(url, timeout, raw_evidence)
+    except urllib.error.HTTPError as exc:
+        if exc.code == 404:
+            status = E4_CONTRADICTED if claim_type == "existence" else E4_OUT_OF_SCOPE
+            return status, {
+                "reason": "COIN_NOT_FOUND",
+                "claim_type": claim_type,
+                "coin_id": normalized_id,
+                "http_status": exc.code,
+                "checked_source": "coingecko",
+            }
+        return E4_INCONCLUSIVE, {
+            "reason": "COINGECKO_HTTP_ERROR",
+            "error_type": type(exc).__name__,
+            "http_status": exc.code,
+            "checked_source": "coingecko",
+        }
+    except RuntimeError as exc:
+        if str(exc) == "LOCAL_RATE_LIMIT":
+            reason = "LOCAL_RATE_LIMIT"
+        else:
+            reason = "COINGECKO_REQUEST_FAILED"
+        return E4_INCONCLUSIVE, {"reason": reason, "checked_source": "coingecko"}
+    except (urllib.error.URLError, TimeoutError, OSError, ValueError, json.JSONDecodeError) as exc:
+        return E4_INCONCLUSIVE, {
+            "reason": "COINGECKO_SOURCE_UNAVAILABLE_OR_INVALID",
+            "error_type": type(exc).__name__,
+            "checked_source": "coingecko",
+        }
+
+    if claim_type == "existence":
+        if payload.get("id") != normalized_id:
+            return E4_INCONCLUSIVE, {
+                "reason": "COINGECKO_RESPONSE_ID_MISMATCH",
+                "coin_id": normalized_id,
+                "observed_id": payload.get("id"),
+                "checked_source": "coingecko",
+            }
+        return E4_VERIFIED, {
+            "result": "VERIFIED",
+            "claim_type": claim_type,
+            "coin_id": normalized_id,
+            "checked_source": "coingecko",
+            "name": payload.get("name"),
+            "symbol": payload.get("symbol"),
+        }
+    if threshold is None:
+        return E4_INCONCLUSIVE, {
+            "reason": "INVALID_THRESHOLD_PCT",
+            "claim_type": claim_type,
+            "threshold_pct": threshold_pct,
+            "checked_source": "coingecko",
+        }
+    if claim_type == "price":
+        coin_data = payload.get(normalized_id)
+        observed_value = coin_data.get("usd") if isinstance(coin_data, dict) else None
+    else:
+        if payload.get("id") != normalized_id:
+            return E4_INCONCLUSIVE, {
+                "reason": "COINGECKO_RESPONSE_ID_MISMATCH",
+                "coin_id": normalized_id,
+                "observed_id": payload.get("id"),
+                "checked_source": "coingecko",
+            }
+        market_data = payload.get("market_data")
+        values = market_data.get("market_cap") if isinstance(market_data, dict) else None
+        observed_value = values.get("usd") if isinstance(values, dict) else None
+
+    if (
+        isinstance(observed_value, bool)
+        or not isinstance(observed_value, (int, float))
+        or not math.isfinite(float(observed_value))
+        or float(observed_value) <= 0
+    ):
+        missing_status = E4_OUT_OF_SCOPE if claim_type == "price" else E4_INCONCLUSIVE
+        return missing_status, {
+            "reason": "COIN_OR_VALUE_NOT_FOUND",
+            "claim_type": claim_type,
+            "coin_id": normalized_id,
+            "checked_source": "coingecko",
+        }
+    claimed = float(claimed_value)
+    observed = float(observed_value)
+    relative_delta_pct = abs(claimed - observed) / observed * 100.0
+    details = {
+        "claim_type": claim_type,
+        "coin_id": normalized_id,
+        "claimed_value": claimed,
+        "observed_value": observed,
+        "relative_delta_pct": relative_delta_pct,
+        "threshold_pct": float(threshold),
+        "checked_source": "coingecko",
+    }
+    if relative_delta_pct > float(threshold):
+        return E4_CONTRADICTED, {**details, "result": "CONTRADICTED"}
+    return E4_VERIFIED, {**details, "result": "VERIFIED"}
+
+
+def verify_claim_with_coingecko(
+    coin_id: str,
+    claim_type: str,
+    claimed_value: float | int | None,
+    threshold_pct: float | None = None,
+    *,
+    timeout: float = REQUEST_TIMEOUT_SECONDS,
+    capture_raw: bool = False,
+) -> tuple[str, dict[str, Any]]:
+    """Backward-compatible public verifier with opt-in exact HTTP evidence."""
+    raw_evidence: list[dict[str, Any]] = []
+    status, details = _verify_claim_with_coingecko(
+        coin_id,
+        claim_type,
+        claimed_value,
+        threshold_pct,
+        timeout=timeout,
+        raw_evidence=raw_evidence if capture_raw else None,
+    )
+    if capture_raw:
+        details = {**details, "raw_evidence": raw_evidence}
+    return status, details
+
+
+# JAMP 2 adapter boundary; E4 decision semantics above are carried forward.
+
+def verify_claim(claim: Jamp2Claim) -> ProviderResult:
+    """Verify a manually constructed claim and retain the exact CoinGecko response."""
+    if claim.type != "price":
+        return ProviderResult(E4_OUT_OF_SCOPE, {"reason": "NOT_A_PRICE_CLAIM"})
+    if claim.value is None:
+        return ProviderResult(E4_INCONCLUSIVE, {"reason": "MISSING_VALUE"})
+    claim_type = "existence" if claim.type == "exists" else claim.type
+    if claim_type in {"price", "market_cap"} and claim.currency not in {None, "USD"}:
+        return ProviderResult(
+            E4_OUT_OF_SCOPE,
+            {"reason": "COINGECKO_CURRENCY_OUT_OF_SCOPE", "currency": claim.currency},
+        )
+    status, details = verify_claim_with_coingecko(
+        claim.ticker, claim_type, claim.value, capture_raw=True
+    )
+    raw_evidence = details.pop("raw_evidence", [])
+    return ProviderResult(status, details, raw_evidence)
+
+class CoinGeckoProvider:
+    def verify_claim(self, claim: Jamp2Claim) -> ProviderResult:
+        return verify_claim(claim)
