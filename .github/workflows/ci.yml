@@ -15,8 +15,24 @@ concurrency:
 
 jobs:
   quality:
-    name: Ruff / Mypy / Pytest
+    name: Ruff / Mypy / Pytest (PostgreSQL 16)
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: jamp2
+          POSTGRES_PASSWORD: jamp2
+          POSTGRES_DB: jamp2
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U jamp2 -d jamp2"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgresql+asyncpg://jamp2:jamp2@localhost:5432/jamp2
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -27,20 +43,11 @@ jobs:
           cache: pip
       - name: Install project and quality tools
         run: python -m pip install -e ".[dev]"
+      - name: Apply database migrations
+        run: alembic upgrade head
       - name: Ruff
         run: ruff check .
       - name: Mypy
         run: mypy src/jamp2
-      - name: Pytest (explicit zero-test bootstrap)
-        shell: bash
-        run: |
-          set +e
-          output="$(python -m pytest -q 2>&1)"
-          result=$?
-          set -e
-          printf '%s\\n' "$output"
-          if [ "$result" -eq 5 ] && printf '%s' "$output" | grep -Eqi 'no tests ran|collected 0 items'; then
-            echo "::notice title=Bootstrap baseline::NO TESTS COLLECTED; pytest exit code 5 accepted only for this documented bootstrap."
-            exit 0
-          fi
-          exit "$result"
+      - name: Pytest (unit and real PostgreSQL integration)
+        run: python -m pytest -q
