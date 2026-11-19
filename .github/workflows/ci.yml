@@ -1,0 +1,46 @@
+name: JAMP 2 CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: jamp2-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  quality:
+    name: Ruff / Mypy / Pytest
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install project and quality tools
+        run: python -m pip install -e ".[dev]"
+      - name: Ruff
+        run: ruff check .
+      - name: Mypy
+        run: mypy src/jamp2
+      - name: Pytest (explicit zero-test bootstrap)
+        shell: bash
+        run: |
+          set +e
+          output="$(python -m pytest -q 2>&1)"
+          result=$?
+          set -e
+          printf '%s\\n' "$output"
+          if [ "$result" -eq 5 ] && printf '%s' "$output" | grep -Eqi 'no tests ran|collected 0 items'; then
+            echo "::notice title=Bootstrap baseline::NO TESTS COLLECTED; pytest exit code 5 accepted only for this documented bootstrap."
+            exit 0
+          fi
+          exit "$result"
