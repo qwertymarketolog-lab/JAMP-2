@@ -29,15 +29,14 @@ class EvidenceRecord:
 
     def __post_init__(self) -> None:
         required_strings = (
-            "evidence_id",
-            "claim_id",
-            "provider",
-            "url",
-            "raw_sha256",
-            "verdict_status",
+            ("evidence_id", self.evidence_id),
+            ("claim_id", self.claim_id),
+            ("provider", self.provider),
+            ("url", self.url),
+            ("raw_sha256", self.raw_sha256),
+            ("verdict_status", self.verdict_status),
         )
-        for field_name in required_strings:
-            value = getattr(self, field_name)
+        for field_name, value in required_strings:
             if not isinstance(value, str) or not value.strip():
                 raise ValueError(f"{field_name} must be a non-empty string")
         if self.http_status is not None and (

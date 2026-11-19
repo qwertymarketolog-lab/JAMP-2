@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import replace
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import pytest
 
@@ -28,7 +28,7 @@ def make_record(
         http_status=200,
         raw_body_bytes=raw_body_bytes,
         raw_sha256=compute_sha256(raw_body_bytes),
-        captured_at_utc=datetime(2026, 11, 19, 20, 0, tzinfo=timezone.utc),
+        captured_at_utc=datetime(2026, 11, 19, 20, 0, tzinfo=UTC),
         parsed_value={"price": 100},
         verdict_status="E4_VERIFIED",
         parent_hash=parent_hash,
@@ -121,8 +121,8 @@ def test_append_rejects_invalid_raw_digest_and_parent_hash() -> None:
 
 
 def test_canonicalization_ignores_key_order_and_normalizes_unicode() -> None:
-    left = {"e\u0301": "cafe\u0301", "nested": {"b": 2, "a": 1}}
-    right = {"nested": {"a": 1, "b": 2}, "\u00e9": "café"}
+    left: JSONValue = {"e\u0301": "cafe\u0301", "nested": {"b": 2, "a": 1}}
+    right: JSONValue = {"nested": {"a": 1, "b": 2}, "\u00e9": "café"}
 
     assert canonicalize(left) == canonicalize(right)
 
