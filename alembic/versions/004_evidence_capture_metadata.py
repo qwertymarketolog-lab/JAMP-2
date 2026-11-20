@@ -10,7 +10,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision = "004_evidence_capture_metadata"
-down_revision = "003_evidence_canonicalization_version"
+down_revision = "003_evidence_canon_v1"
 branch_labels = None
 depends_on = None
 
