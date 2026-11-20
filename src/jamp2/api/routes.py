@@ -247,6 +247,19 @@ def build_router(
                     "provider_status": result.status,
                 },
             )
+        claim_snapshot: dict[str, Any] = {
+            "text": claim.text,
+            "subject_kind": claim.subject_kind,
+            "subject_identifier": claim.subject_identifier,
+            "predicate": claim.predicate,
+            "expected_value": claim.expected_value,
+            "unit": claim.unit,
+        }
+        evidence_payload: dict[str, Any] = {
+            "claim": claim_snapshot,
+            "provider_result": result.details,
+            "trade_date": result.details.get("trade_date"),
+        }
         records: list[EvidenceRecord] = []
         try:
             for observation in result.raw_evidence:
@@ -256,7 +269,7 @@ def build_router(
                     allowed_host=allowed_host,
                     adapter_version=adapter_version,
                     observation=observation,
-                    parsed_value=result.details,
+                    parsed_value=evidence_payload,
                     verdict_status="OBSERVATION_CAPTURED",
                 )
                 records.append(await ledger.append(record))
