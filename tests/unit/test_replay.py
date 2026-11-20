@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 from datetime import UTC, datetime
 
 from jamp2.evidence.digest import compute_sha256
@@ -118,12 +119,6 @@ def test_coingecko_replay_uses_stored_usd_response() -> None:
         raw,
         claim,
     )
-    record = EvidenceRecord(
-        **{
-            **record.__dict__,
-            "provider_adapter_version": "coingecko-adapter-v1",
-        }
-    )
     result = replay_verdict(verdict(("evidence-coin",)), [record])
     assert result["replay_status"] == "VERIFIED"
     assert result["observed_value"] == 67000.0
@@ -140,16 +135,12 @@ def test_replay_fails_closed_for_unknown_policy_or_bad_digest() -> None:
         raw,
         claim,
     )
-    unknown_policy = VerdictRecord(
-        **{
-            **verdict(("evidence-catalog",)).__dict__,
-            "policy_version": "unrecognized-policy",
-        }
+    unknown_policy = replace(
+        verdict(("evidence-catalog",)),
+        policy_version="unrecognized-policy",
     )
     assert replay_verdict(unknown_policy, [record])["replay_status"] == "INCONCLUSIVE"
-    corrupted = EvidenceRecord(
-        **{**record.__dict__, "raw_sha256": "0" * 64}
-    )
+    corrupted = replace(record, raw_sha256="0" * 64)
     assert (
         replay_verdict(verdict(("evidence-catalog",)), [corrupted])["reason_code"]
         == "EVIDENCE_INTEGRITY_OR_VERSION_MISMATCH"
