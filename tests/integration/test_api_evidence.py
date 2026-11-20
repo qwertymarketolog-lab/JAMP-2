@@ -71,6 +71,7 @@ def test_api_server_verifies_claim_persists_raw_evidence_and_reads_it() -> None:
             ledger,
             api_key="integration-test-key",
             providers={"moex": StubProvider()},
+            code_version="integration-test-sha",
         )
         async with httpx.AsyncClient(
             transport=httpx.ASGITransport(app=application),
@@ -84,6 +85,13 @@ def test_api_server_verifies_claim_persists_raw_evidence_and_reads_it() -> None:
             assert body["provider"] == "moex.iss"
             assert body["evidence_count"] == 1
             evidence_id = body["evidence_ids"][0]
+            verdict_response = await client.get(f"/v1/verdicts/{body['verdict_id']}")
+            assert verdict_response.status_code == 200
+            verdict_record = verdict_response.json()
+            assert verdict_record["evidence_ids"] == body["evidence_ids"]
+            assert verdict_record["policy_version"] == "provider-defaults-v1"
+            assert verdict_record["code_version"] == "integration-test-sha"
+            assert verdict_record["canonicalization_version"] == "jamp-json-nfc-v1"
 
             fetched = await client.get(f"/v1/evidence/{evidence_id}")
             assert fetched.status_code == 200
@@ -150,7 +158,9 @@ def test_api_returns_500_on_integrity_violation() -> None:
                 text("UPDATE evidence SET raw_body_bytes = :body WHERE evidence_id = :id"),
                 {"body": b'{"price":101}', "id": "api-tamper"},
             )
-        application = create_app(ledger, api_key="integration-test-key")
+        application = create_app(
+            ledger, api_key="integration-test-key", code_version="integration-test-sha"
+        )
         async with httpx.AsyncClient(
             transport=httpx.ASGITransport(app=application),
             base_url="http://test",
