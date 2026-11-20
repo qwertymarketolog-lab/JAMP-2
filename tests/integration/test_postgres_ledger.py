@@ -41,6 +41,7 @@ def make_record(evidence_id: str, body: bytes | None = None) -> EvidenceRecord:
 
 async def reset_ledger(ledger: PostgresLedger) -> None:
     async with ledger.engine.begin() as connection:
+        await connection.execute(text("TRUNCATE TABLE verdicts RESTART IDENTITY"))
         await connection.execute(text("TRUNCATE TABLE evidence RESTART IDENTITY"))
 
 
