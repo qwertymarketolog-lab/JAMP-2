@@ -15,15 +15,6 @@ VerificationMode = Literal["SINGLE_SOURCE", "MULTI_SOURCE"]
 ObservationStatus = Literal["VALID", "EXPIRED", "INCOMPLETE", "FAILED"]
 ComparisonMode = Literal["EXACT_V1"]
 
-_REASON_CODES = frozenset(
-    {
-        "ERR_QUORUM_NOT_MET",
-        "ERR_TEMPORAL_SKEW_EXCEEDED",
-        "ERR_INCOMPATIBLE_PROVENANCE",
-        "ERR_SINGLE_SOURCE_FORCED",
-    }
-)
-
 
 def _utc(value: datetime, field_name: str) -> datetime:
     if not isinstance(value, datetime) or value.tzinfo is None or value.utcoffset() is None:
@@ -130,7 +121,9 @@ class SourcePolicyRecord:
                 raise ValueError(f"{name} is required")
         if isinstance(self.version, bool) or self.version < 1:
             raise ValueError("version must be a positive integer")
-        if not self.required_identifiers or any(not item.strip() for item in self.required_identifiers):
+        if not self.required_identifiers or any(
+            not item.strip() for item in self.required_identifiers
+        ):
             raise ValueError("required_identifiers must be non-empty")
         if not self.required_sources or any(not item.strip() for item in self.required_sources):
             raise ValueError("required_sources must be non-empty")
@@ -215,31 +208,46 @@ def evaluate_source_policy(
         observed_at = _parse_provider_time(item.provider_observed_at)
         if not item.body_complete or observed_at is None:
             eligibility.append(
-                SourceEligibility(provider_id, "INCOMPLETE", observed_at, fetched_at,
-                                  "SOURCE_TIMESTAMP_OR_BODY_INCOMPLETE")
+                SourceEligibility(
+                    provider_id,
+                    "INCOMPLETE",
+                    observed_at,
+                    fetched_at,
+                    "SOURCE_TIMESTAMP_OR_BODY_INCOMPLETE",
+                )
             )
             continue
         if (
             item.quote_currency != policy.quote_currency
             or item.price_type != policy.price_type
-            or any(identifier not in item.identifiers for identifier in policy.required_identifiers)
+            or any(
+                identifier not in item.identifiers
+                for identifier in policy.required_identifiers
+            )
         ):
             eligibility.append(
-                SourceEligibility(provider_id, "INCOMPLETE", observed_at, fetched_at,
-                                  "SOURCE_IDENTITY_OR_QUOTE_MISMATCH")
+                SourceEligibility(
+                    provider_id,
+                    "INCOMPLETE",
+                    observed_at,
+                    fetched_at,
+                    "SOURCE_IDENTITY_OR_QUOTE_MISMATCH",
+                )
             )
             continue
         age = (current - observed_at).total_seconds()
         if age < 0 or age > policy.max_age_seconds:
             eligibility.append(
-                SourceEligibility(provider_id, "EXPIRED", observed_at, fetched_at,
-                                  "SOURCE_AGE_OUT_OF_POLICY")
+                SourceEligibility(
+                    provider_id, "EXPIRED", observed_at, fetched_at, "SOURCE_AGE_OUT_OF_POLICY"
+                )
             )
             continue
         if (fetched_at - observed_at).total_seconds() < 0:
             eligibility.append(
-                SourceEligibility(provider_id, "EXPIRED", observed_at, fetched_at,
-                                  "SOURCE_TIME_IN_FUTURE")
+                SourceEligibility(
+                    provider_id, "EXPIRED", observed_at, fetched_at, "SOURCE_TIME_IN_FUTURE"
+                )
             )
             continue
         eligibility.append(SourceEligibility(provider_id, "VALID", observed_at, fetched_at))
@@ -263,9 +271,11 @@ def evaluate_source_policy(
     else:
         reasons.append("ERR_SINGLE_SOURCE_FORCED")
 
-    valid_times = [item.provider_observed_at for item in valid]
+    valid_times = [
+        item.provider_observed_at for item in valid if item.provider_observed_at is not None
+    ]
     if len(valid_times) >= 2:
-        skew = (max(valid_times) - min(valid_times)).total_seconds()  # type: ignore[arg-type]
+        skew = (max(valid_times) - min(valid_times)).total_seconds()
         if skew > policy.max_time_skew_seconds:
             reasons.append("ERR_TEMPORAL_SKEW_EXCEEDED")
             eligibility = [
@@ -274,8 +284,11 @@ def evaluate_source_policy(
                     "EXPIRED" if item.observation_status == "VALID" else item.observation_status,
                     item.provider_observed_at,
                     item.fetched_at,
-                    "SOURCE_TIME_SKEW_EXCEEDED" if item.observation_status == "VALID"
-                    else item.reason_code,
+                    (
+                        "SOURCE_TIME_SKEW_EXCEEDED"
+                        if item.observation_status == "VALID"
+                        else item.reason_code
+                    ),
                 )
                 for item in eligibility
             ]
