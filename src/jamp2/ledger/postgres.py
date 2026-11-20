@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 from collections.abc import Sequence
+from typing import Any
 from dataclasses import replace
 from datetime import datetime
 
@@ -19,8 +20,9 @@ from sqlalchemy import (
     insert,
     select,
     text,
+    update,
 )
-from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.dialects.postgresql import JSONB, insert as pg_insert
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
@@ -103,6 +105,21 @@ class VerdictRow(Base):
     explanation: Mapped[str] = mapped_column(Text)
     parent_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
     record_hash: Mapped[str] = mapped_column(String(64))
+
+
+class IdempotencyRow(Base):
+    """Mutable request coordination state; keys are stored only as SHA-256 digests."""
+
+    __tablename__ = "idempotency_records"
+
+    key_hash: Mapped[str] = mapped_column(String(64), primary_key=True)
+    request_digest: Mapped[str] = mapped_column(String(64))
+    claim_id: Mapped[str] = mapped_column(String(255))
+    status: Mapped[str] = mapped_column(String(16))
+    response_payload: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
+    verdict_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    created_at_utc: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    completed_at_utc: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
 _LOCK_KEY = 731_942_001
@@ -370,6 +387,95 @@ class PostgresLedger:
             return False
         except SQLAlchemyError as exc:
             raise LedgerUnavailable("PostgreSQL verdict verification failed") from exc
+
+
+    async def begin_idempotency(
+        self,
+        *,
+        key_hash: str,
+        request_digest: str,
+        claim_id: str,
+    ) -> tuple[str, dict[str, Any] | None]:
+        """Atomically reserve a key or return the already-recorded request state."""
+        try:
+            async with self.engine.begin() as connection:
+                inserted = await connection.execute(
+                    pg_insert(IdempotencyRow)
+                    .values(
+                        key_hash=key_hash,
+                        request_digest=request_digest,
+                        claim_id=claim_id,
+                        status="PENDING",
+                    )
+                    .on_conflict_do_nothing(index_elements=[IdempotencyRow.key_hash])
+                    .returning(IdempotencyRow.key_hash)
+                )
+                is_new = inserted.scalar_one_or_none() is not None
+                result = await connection.execute(
+                    select(IdempotencyRow.__table__)
+                    .where(IdempotencyRow.key_hash == key_hash)
+                    .with_for_update()
+                )
+                row = IdempotencyRow(**dict(result.mappings().one()))
+                if is_new:
+                    return "NEW", None
+                if row.request_digest != request_digest:
+                    return "KEY_REUSED", None
+                if row.status == "COMPLETED":
+                    return "COMPLETED", row.response_payload
+                if row.status == "PENDING":
+                    return "IN_PROGRESS", None
+                return "FAILED", None
+        except SQLAlchemyError as exc:
+            raise LedgerUnavailable("Idempotency reservation failed") from exc
+
+    async def complete_idempotency(
+        self,
+        *,
+        key_hash: str,
+        request_digest: str,
+        verdict_id: str,
+        response_payload: dict[str, Any],
+    ) -> None:
+        """Mark a reserved key complete with the exact response returned to the caller."""
+        try:
+            async with self.engine.begin() as connection:
+                result = await connection.execute(
+                    update(IdempotencyRow)
+                    .where(
+                        IdempotencyRow.key_hash == key_hash,
+                        IdempotencyRow.request_digest == request_digest,
+                        IdempotencyRow.status == "PENDING",
+                    )
+                    .values(
+                        status="COMPLETED",
+                        verdict_id=verdict_id,
+                        response_payload=response_payload,
+                        completed_at_utc=datetime.now().astimezone(),
+                    )
+                )
+                if result.rowcount != 1:
+                    raise IntegrityViolation("idempotency reservation is not pending")
+        except IntegrityViolation:
+            raise
+        except SQLAlchemyError as exc:
+            raise LedgerUnavailable("Idempotency completion failed") from exc
+
+    async def fail_idempotency(self, *, key_hash: str, request_digest: str) -> None:
+        """Close a reserved key after a failed attempt; it cannot be silently reused."""
+        try:
+            async with self.engine.begin() as connection:
+                await connection.execute(
+                    update(IdempotencyRow)
+                    .where(
+                        IdempotencyRow.key_hash == key_hash,
+                        IdempotencyRow.request_digest == request_digest,
+                        IdempotencyRow.status == "PENDING",
+                    )
+                    .values(status="FAILED")
+                )
+        except SQLAlchemyError as exc:
+            raise LedgerUnavailable("Idempotency failure recording failed") from exc
 
     async def close(self) -> None:
         """Dispose the async connection pool."""
