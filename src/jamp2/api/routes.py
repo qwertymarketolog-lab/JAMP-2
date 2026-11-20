@@ -1,19 +1,29 @@
-"""Evidence API routes with explicit fail-closed error mapping."""
+"""Authenticated claim verification routes with server-side provider acquisition."""
 
 from __future__ import annotations
 
 import base64
 import binascii
-from datetime import UTC
+import hashlib
+import hmac
+import os
+import uuid
+from datetime import UTC, datetime
 from typing import Protocol
+from urllib.parse import urlsplit
 
-from fastapi import APIRouter, status
+from fastapi import APIRouter, Header, HTTPException, status
+from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import JSONResponse
 
-from jamp2.api.schemas import EvidenceCreate
-from jamp2.evidence.digest import compute_record_hash
+from jamp2.api.schemas import ClaimVerifyRequest
+from jamp2.domain.claim import Claim
+from jamp2.evidence.digest import compute_record_hash, compute_sha256
 from jamp2.evidence.model import EvidenceRecord
 from jamp2.ledger.postgres import DuplicateEvidence, IntegrityViolation, LedgerUnavailable
+from jamp2.providers.base import Provider, ProviderResult
+from jamp2.providers.coingecko import CoinGeckoProvider
+from jamp2.providers.moex import MoexProvider
 
 
 class EvidenceLedger(Protocol):
@@ -57,54 +67,177 @@ def _ledger_error(exc: Exception) -> JSONResponse:
     raise exc
 
 
-def build_router(ledger: EvidenceLedger) -> APIRouter:
-    """Bind a fresh router instance to one ledger implementation."""
-    router = APIRouter(prefix="/v1/evidence", tags=["evidence"])
+def _provider_configuration(
+    subject_kind: str, unit: str
+) -> tuple[str, str, str] | None:
+    """Resolve only explicit supported subject kinds to fixed provider identities."""
+    if subject_kind == "moex_security" and unit == "RUB":
+        return "moex", "moex.iss", "iss.moex.com"
+    if subject_kind == "coingecko_coin" and unit == "USD":
+        return "coingecko", "coingecko", "api.coingecko.com"
+    return None
 
-    @router.post("", status_code=status.HTTP_201_CREATED, response_model=None)
-    async def create_evidence(
-        payload: EvidenceCreate,
+
+def _evidence_record(
+    *,
+    claim_id: str,
+    provider_id: str,
+    allowed_host: str,
+    observation: dict[str, object],
+    parsed_value: dict[str, object],
+    verdict_status: str,
+) -> EvidenceRecord:
+    """Validate adapter capture metadata and construct a server-owned record."""
+    url = observation.get("url")
+    source = observation.get("source")
+    body_encoded = observation.get("raw_body_base64")
+    source_digest = observation.get("sha256_body")
+    http_status = observation.get("status_code")
+    body_complete = observation.get("body_complete")
+    if (
+        not isinstance(url, str)
+        or not isinstance(source, str)
+        or not isinstance(body_encoded, str)
+        or not isinstance(source_digest, str)
+        or not isinstance(http_status, int)
+        or not isinstance(body_complete, bool)
+        or not body_complete
+    ):
+        raise IntegrityViolation("provider returned incomplete evidence metadata")
+    parsed_url = urlsplit(url)
+    if parsed_url.scheme != "https" or parsed_url.hostname != allowed_host:
+        raise IntegrityViolation("provider returned a URL outside its fixed source host")
+    try:
+        raw_body = base64.b64decode(body_encoded, validate=True)
+    except (binascii.Error, ValueError) as exc:
+        raise IntegrityViolation("provider returned invalid base64 evidence") from exc
+    actual_digest = compute_sha256(raw_body)
+    if not hmac.compare_digest(actual_digest, source_digest):
+        raise IntegrityViolation("provider raw response digest mismatch")
+    if source != provider_id:
+        raise IntegrityViolation("provider identity mismatch")
+    return EvidenceRecord(
+        evidence_id=str(uuid.uuid4()),
+        claim_id=claim_id,
+        provider=provider_id,
+        url=url,
+        http_status=http_status,
+        raw_body_bytes=raw_body,
+        raw_sha256=actual_digest,
+        captured_at_utc=datetime.now(UTC),
+        parsed_value=parsed_value,
+        verdict_status=verdict_status,
+        parent_hash=None,
+    )
+
+
+def build_router(
+    ledger: EvidenceLedger,
+    *,
+    api_key: str | None,
+    providers: dict[str, Provider] | None = None,
+) -> APIRouter:
+    """Bind authenticated claim verification to a ledger and fixed provider adapters."""
+    configured_key = api_key if api_key is not None else os.getenv("JAMP2_API_KEY")
+    provider_map = providers or {
+        "moex": MoexProvider(),
+        "coingecko": CoinGeckoProvider(),
+    }
+    router = APIRouter(prefix="/v1", tags=["trust-layer"])
+
+    async def require_api_key(
+        x_api_key: str | None = Header(default=None, alias="X-API-Key"),
+    ) -> None:
+        if not configured_key:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail={"error": "API_KEY_NOT_CONFIGURED"},
+            )
+        if not isinstance(x_api_key, str) or not hmac.compare_digest(
+            x_api_key.encode("utf-8"), configured_key.encode("utf-8")
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail={"error": "UNAUTHORIZED"},
+            )
+
+    @router.post("/claims/verify", status_code=status.HTTP_201_CREATED, response_model=None)
+    async def verify_claim(
+        payload: ClaimVerifyRequest,
+        _: None = __import__("fastapi").Depends(require_api_key),
     ) -> dict[str, object] | JSONResponse:
-        try:
-            raw_body = base64.b64decode(payload.raw_body_base64, validate=True)
-        except (binascii.Error, ValueError):
+        configuration = _provider_configuration(payload.subject.kind, payload.unit)
+        if configuration is None:
             return JSONResponse(
-                status_code=422,
-                content={"error": "INVALID_RAW_BODY_BASE64"},
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                content={"error": "UNSUPPORTED_SUBJECT_UNIT_COMBINATION"},
             )
-        captured_at = payload.captured_at_utc
-        if captured_at.tzinfo is None:
+        provider_key, provider_id, allowed_host = configuration
+        provider = provider_map.get(provider_key)
+        if provider is None:
             return JSONResponse(
-                status_code=422,
-                content={"error": "CAPTURE_TIME_MUST_BE_UTC"},
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                content={"error": "PROVIDER_NOT_CONFIGURED"},
             )
-        offset = captured_at.utcoffset()
-        if offset is None or offset.total_seconds() != 0:
-            return JSONResponse(
-                status_code=422,
-                content={"error": "CAPTURE_TIME_MUST_BE_UTC"},
-            )
-        record = EvidenceRecord(
-            evidence_id=payload.evidence_id,
-            claim_id=payload.claim_id,
-            provider=payload.provider,
-            url=payload.url,
-            http_status=payload.http_status,
-            raw_body_bytes=raw_body,
-            raw_sha256=payload.raw_sha256,
-            captured_at_utc=captured_at.astimezone(UTC),
-            parsed_value=payload.parsed_value,
-            verdict_status=payload.verdict_status,
-            parent_hash=None,
+        claim_id = str(uuid.uuid4())
+        claim = Claim(
+            text=payload.text,
+            type=payload.predicate,
+            ticker=payload.subject.identifier,
+            value=payload.expected_value,
+            currency=payload.unit,
         )
         try:
-            stored = await ledger.append(record)
+            result: ProviderResult = await run_in_threadpool(provider.verify_claim, claim)
+        except Exception:
+            return JSONResponse(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                content={"error": "PROVIDER_VERIFICATION_FAILED"},
+            )
+        status_map = {
+            "E4_VERIFIED": "VERIFIED",
+            "E4_CONTRADICTED": "CONTRADICTED",
+            "E4_OUT_OF_SCOPE": "OUT_OF_SCOPE",
+            "E4_INCONCLUSIVE": "INCONCLUSIVE",
+        }
+        verdict = status_map.get(result.status, "INCONCLUSIVE")
+        if not result.raw_evidence:
+            return JSONResponse(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                content={
+                    "error": "SOURCE_EVIDENCE_NOT_CAPTURED",
+                    "provider_status": result.status,
+                },
+            )
+        records: list[EvidenceRecord] = []
+        try:
+            for observation in result.raw_evidence:
+                record = _evidence_record(
+                    claim_id=claim_id,
+                    provider_id=provider_id,
+                    allowed_host=allowed_host,
+                    observation=observation,
+                    parsed_value=result.details,
+                    verdict_status=result.status,
+                )
+                records.append(await ledger.append(record))
         except (DuplicateEvidence, IntegrityViolation, LedgerUnavailable) as exc:
             return _ledger_error(exc)
-        return _serialize(stored)
+        return {
+            "claim_id": claim_id,
+            "verdict": verdict,
+            "provider_status": result.status,
+            "provider": provider_id,
+            "evidence_ids": [record.evidence_id for record in records],
+            "evidence_count": len(records),
+            "details": result.details,
+        }
 
-    @router.get("/{evidence_id}", response_model=None)
-    async def read_evidence(evidence_id: str) -> dict[str, object] | JSONResponse:
+    @router.get("/evidence/{evidence_id}", response_model=None)
+    async def read_evidence(
+        evidence_id: str,
+        _: None = __import__("fastapi").Depends(require_api_key),
+    ) -> dict[str, object] | JSONResponse:
         try:
             record = await ledger.get(evidence_id)
         except (DuplicateEvidence, IntegrityViolation, LedgerUnavailable) as exc:
