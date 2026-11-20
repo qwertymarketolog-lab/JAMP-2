@@ -170,7 +170,7 @@ The first implementation must test the conflict reducer with controlled evidence
 
 ## 10. CI and verification contract
 
-Current observed state at authoring:
+Historical baseline observed when this specification was first drafted:
 
 - PR #3 head: `f060d4d5424e3c874539aee3eb08f7ee8e8a389d`.
 - Latest PR #3 workflow: `JAMP 2 CI`, Run `44608939658`, Job `135860031664`, conclusion `failure`; Pytest failed during collection, so no tests executed.
@@ -220,3 +220,42 @@ The reworked PR is ready for review only when:
 - PR #3 remains unmerged until a separate owner decision after review.
 
 **Owner authorization boundary:** The project owner explicitly authorized adding, changing, and running project work on 2026-11-20. Implementation within the existing PR #3 branch and this approved scope is authorized. Do not merge PR #3, deploy, expose the API publicly, or change JAMP 1 without a separate explicit decision. CI evidence remains mandatory.
+
+
+## 13. Live implementation status — 2026-11-20 05:40 UTC
+
+This section supersedes the historical PR #3 baseline in §10. It records current implementation evidence; it does not change the acceptance criteria or authorize merge/deployment.
+
+**Current PR #3 terminal evidence:**
+
+- Head SHA: `fe10a176c8e9a8d8bc7b831e2b3b329b3dc500c4`
+- Workflow: `JAMP 2 CI`
+- Run ID: `44682372212`
+- Job ID: `136108576542`
+- Conclusion: `success`
+- PostgreSQL 16 migration: SUCCESS
+- Ruff: SUCCESS
+- Mypy: SUCCESS — 20 source files
+- Pytest: `85 passed in 1.45s`
+- Artifact ID: `14604293770`
+- Artifact SHA-256: `4ef7b7f6855c0c79aa2f3b753e50ffbbcc45cacbbce174a29de8a413f82d9913`
+
+**Implemented and covered by CI:**
+
+- Claim-only authenticated write route; legacy client-authored `POST /v1/evidence` removed.
+- Provider-independent `NormalizedClaim` and deterministic MOEX/CoinGecko resolver for the supported price-claim slice.
+- Fail-closed API key, server-side source acquisition, fixed-host checks, server-computed raw SHA-256, capture/source metadata and parser/provider/canonicalization versions.
+- Separate append-only Evidence and Verdict ledgers, evidence linkage, version-bound verdict hashes and DB immutability.
+- Persistent idempotency keys; repeated identical request returns the stored response, key reuse with a different request is rejected.
+- Deterministic no-network replay for the recorded `provider-defaults-v1` policy and supported provider/parser versions.
+- Pure conflict reducer returns `AMBIGUOUS` for conflicting usable observations; the reducer is not yet wired to a multi-provider API workflow.
+- Migrations 003/004 stop if the evidence table is non-empty; no silent hash rewrite is performed.
+
+**Still open / not proven:**
+
+- Live external MOEX/CoinGecko end-to-end acquisition has not been run; CI provider paths use deterministic fixtures/mocked HTTP.
+- Conflict reducer is not yet connected to cross-provider acquisition or automatic AMBIGUOUS verdict creation.
+- Claim snapshot is bound into EvidenceRecord metadata; a standalone Claim table is not yet present.
+- Replay is limited to the explicitly supported policy/parser/canonicalization versions; it is not arbitrary historical code execution.
+- Single API-key pilot only. No multi-tenant model, Dashboard, public deployment, or external chain anchor.
+- PR #3 remains OPEN / unmerged. Post-merge CI does not exist because no merge has occurred.
