@@ -170,11 +170,10 @@ class PostgresLedger:
         """Return claim records in append order after verifying the full chain."""
         try:
             async with self.engine.connect() as connection:
-                rows = (
-                    await connection.execute(
-                        select(EvidenceRow).order_by(EvidenceRow.sequence_id.asc())
-                    )
-                ).scalars().all()
+                result = await connection.execute(
+                    select(EvidenceRow.__table__).order_by(EvidenceRow.sequence_id.asc())
+                )
+                rows = [EvidenceRow(**dict(row)) for row in result.mappings().all()]
             self._verify_rows(rows)
             return [_to_record(row) for row in rows if row.claim_id == claim_id]
         except IntegrityViolation:
@@ -186,11 +185,10 @@ class PostgresLedger:
         """Return true only when all persisted hashes and parent links are valid."""
         try:
             async with self.engine.connect() as connection:
-                rows = (
-                    await connection.execute(
-                        select(EvidenceRow).order_by(EvidenceRow.sequence_id.asc())
-                    )
-                ).scalars().all()
+                result = await connection.execute(
+                    select(EvidenceRow.__table__).order_by(EvidenceRow.sequence_id.asc())
+                )
+                rows = [EvidenceRow(**dict(row)) for row in result.mappings().all()]
             self._verify_rows(rows)
             return True
         except IntegrityViolation:
