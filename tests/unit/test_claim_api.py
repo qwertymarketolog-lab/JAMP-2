@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import hashlib
 from typing import Any
 
 import httpx
@@ -26,7 +27,7 @@ def request_payload() -> dict[str, object]:
 
 class MemoryLedger:
     def __init__(self) -> None:
-        self.records: dict[str, EvidenceRecord] = []
+        self.records: list[EvidenceRecord] = []
 
     async def append(self, record: EvidenceRecord) -> EvidenceRecord:
         self.records.append(record)
@@ -51,7 +52,7 @@ class StubProvider:
         digest = (
             "a" * 64
             if not self.valid_digest
-            else __import__("hashlib").sha256(raw).hexdigest()
+            else hashlib.sha256(raw).hexdigest()
         )
         return ProviderResult(
             "E4_VERIFIED",
