@@ -14,11 +14,17 @@ def create_app(
     *,
     api_key: str | None = None,
     providers: dict[str, Provider] | None = None,
+    code_version: str | None = None,
 ) -> FastAPI:
     """Create the API without silently falling back to memory or disabling auth."""
     application = FastAPI(title="JAMP 2 Trust Layer API", version="1.0.0")
     application.include_router(
-        build_router(ledger or PostgresLedger(), api_key=api_key, providers=providers)
+        build_router(
+            ledger or PostgresLedger(),
+            api_key=api_key,
+            providers=providers,
+            code_version=code_version,
+        )
     )
     return application
 
