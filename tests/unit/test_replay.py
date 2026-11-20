@@ -110,8 +110,20 @@ def test_moex_replay_preserves_contradiction() -> None:
     catalog = b'{"securities":{"columns":["secid"],"data":[["SBER"]]}}'
     marketdata = b'{"marketdata":{"columns":["SECID","LAST"],"data":[["SBER",100.0]]}}'
     records = [
-        evidence("evidence-catalog", "moex.iss", "https://iss.moex.com/iss/securities.json", catalog, claim),
-        evidence("evidence-price", "moex.iss", "https://iss.moex.com/iss/marketdata.json", marketdata, claim),
+        evidence(
+            "evidence-catalog",
+            "moex.iss",
+            "https://iss.moex.com/iss/securities.json",
+            catalog,
+            claim,
+        ),
+        evidence(
+            "evidence-price",
+            "moex.iss",
+            "https://iss.moex.com/iss/marketdata.json",
+            marketdata,
+            claim,
+        ),
     ]
     result = replay_verdict(
         verdict(("evidence-catalog", "evidence-price"), status="CONTRADICTED"),
