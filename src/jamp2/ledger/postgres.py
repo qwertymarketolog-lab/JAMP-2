@@ -5,8 +5,8 @@ from __future__ import annotations
 import os
 from collections.abc import Sequence
 from dataclasses import replace
-from typing import Any
 from datetime import UTC, datetime
+from typing import Any
 
 from sqlalchemy import (
     BigInteger,
