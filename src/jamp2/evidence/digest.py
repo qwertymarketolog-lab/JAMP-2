@@ -7,6 +7,7 @@ import hashlib
 
 from jamp2.evidence.canonicalize import canonicalize
 from jamp2.evidence.model import EvidenceRecord
+from jamp2.evidence.verdict import VerdictRecord
 
 
 def compute_sha256(value: bytes) -> str:
@@ -27,6 +28,25 @@ def compute_record_hash(record: EvidenceRecord) -> str:
         "captured_at_utc": record.captured_at_utc.isoformat(),
         "parsed_value": record.parsed_value,
         "verdict_status": record.verdict_status,
+        "parent_hash": record.parent_hash,
+    }
+    return compute_sha256(canonicalize(payload))
+
+
+def compute_verdict_hash(record: VerdictRecord) -> str:
+    """Hash every immutable verdict field and its preceding verdict-chain hash."""
+    payload = {
+        "verdict_id": record.verdict_id,
+        "claim_id": record.claim_id,
+        "status": record.status,
+        "evidence_ids": list(record.evidence_ids),
+        "policy_id": record.policy_id,
+        "policy_version": record.policy_version,
+        "code_version": record.code_version,
+        "canonicalization_version": record.canonicalization_version,
+        "decided_at_utc": record.decided_at_utc.isoformat(),
+        "reason_codes": list(record.reason_codes),
+        "explanation": record.explanation,
         "parent_hash": record.parent_hash,
     }
     return compute_sha256(canonicalize(payload))
