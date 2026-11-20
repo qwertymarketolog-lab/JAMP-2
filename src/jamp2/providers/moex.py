@@ -8,12 +8,12 @@ from __future__ import annotations
 
 import base64
 import hashlib
-from datetime import UTC, datetime
 import json
 import math
 import urllib.error
 import urllib.parse
 import urllib.request
+from datetime import UTC, datetime
 from typing import Any
 
 from jamp2.domain.claim import Claim as Jamp2Claim
@@ -392,7 +392,9 @@ def verify_claim(claim: Jamp2Claim) -> ProviderResult:
         status,
         {
             **details,
-            "source_identifiers": [claim.ticker] if status in {E4_VERIFIED, E4_CONTRADICTED} else [],
+            "source_identifiers": (
+                [claim.ticker] if status in {E4_VERIFIED, E4_CONTRADICTED} else []
+            ),
             "quote_currency": claim.currency or "RUB",
             "price_type": "LAST_DEAL",
         },
