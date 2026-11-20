@@ -1,6 +1,6 @@
 """Pin canonicalization version on every evidence record.
 
-Revision ID: 003_evidence_canonicalization_version
+Revision ID: 003_evidence_canon_v1
 """
 
 from __future__ import annotations
@@ -9,7 +9,7 @@ import sqlalchemy as sa
 
 from alembic import op
 
-revision = "003_evidence_canonicalization_version"
+revision = "003_evidence_canon_v1"
 down_revision = "002_verdict_records"
 branch_labels = None
 depends_on = None
