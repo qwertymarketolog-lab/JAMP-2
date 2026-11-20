@@ -101,6 +101,10 @@ def test_api_server_verifies_claim_persists_raw_evidence_and_reads_it() -> None:
             assert raw == b'{"marketdata":{"LAST":300}}'
             assert evidence["raw_sha256"] == compute_sha256(raw)
             assert evidence["canonicalization_version"] == "jamp-json-nfc-v1"
+            assert evidence["source_timestamp"] == "2026-11-19"
+            assert evidence["body_complete"] is True
+            assert evidence["provider_adapter_version"] == "moex-iss-adapter-v1"
+            assert evidence["parser_version"] == "jamp-provider-json-v1"
             assert evidence["captured_at_utc"].endswith("+00:00")
 
             missing = await client.get("/v1/evidence/not-found")
