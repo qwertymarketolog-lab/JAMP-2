@@ -5,8 +5,8 @@ from __future__ import annotations
 from fastapi import FastAPI
 
 from jamp2.api.routes import EvidenceLedger, build_router
-from jamp2.ledger.postgres import PostgresLedger
 from jamp2.evidence.multisource import MultiSourcePolicy
+from jamp2.ledger.postgres import PostgresLedger
 from jamp2.providers.base import Provider
 
 
