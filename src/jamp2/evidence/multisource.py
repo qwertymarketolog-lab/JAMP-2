@@ -201,16 +201,8 @@ async def arbitrate(
                 if isinstance(source_identifiers, (list, tuple))
                 and all(isinstance(item, str) for item in source_identifiers)
                 else (),
-                quote_currency=(
-                    outcome.details.get("quote_currency")
-                    if isinstance(outcome.details.get("quote_currency"), str)
-                    else ""
-                ),
-                price_type=(
-                    outcome.details.get("price_type")
-                    if isinstance(outcome.details.get("price_type"), str)
-                    else ""
-                ),
+                quote_currency=str(outcome.details.get("quote_currency", "")),
+                price_type=str(outcome.details.get("price_type", "")),
             )
         )
     gate = evaluate_source_policy(
@@ -249,7 +241,12 @@ async def arbitrate(
         )
 
     reducer = detect_conflicts([outcome.observation for outcome in outcomes])
-    usable_count = int(reducer["usable_observation_count"])
+    usable_count_value = reducer.get("usable_observation_count", 0)
+    usable_count = (
+        usable_count_value
+        if isinstance(usable_count_value, int) and not isinstance(usable_count_value, bool)
+        else 0
+    )
     failures = [outcome for outcome in outcomes if not outcome.observation.usable]
     reasons: list[str] = list(gate.decision_reason_codes)
 
