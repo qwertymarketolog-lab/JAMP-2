@@ -58,6 +58,7 @@ def make_verdict(evidence_id: str = "evidence-verdict-1") -> VerdictRecord:
 
 async def reset_ledger(ledger: PostgresLedger) -> None:
     async with ledger.engine.begin() as connection:
+        await connection.execute(text("TRUNCATE TABLE idempotency_records"))
         await connection.execute(text("TRUNCATE TABLE verdicts RESTART IDENTITY"))
         await connection.execute(text("TRUNCATE TABLE evidence RESTART IDENTITY"))
 
