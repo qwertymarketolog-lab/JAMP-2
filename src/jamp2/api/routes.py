@@ -51,6 +51,7 @@ def _serialize(record: EvidenceRecord) -> dict[str, object]:
         "captured_at_utc": record.captured_at_utc.isoformat(),
         "parsed_value": record.parsed_value,
         "verdict_status": record.verdict_status,
+        "canonicalization_version": record.canonicalization_version,
         "parent_hash": record.parent_hash,
         "record_hash": compute_record_hash(record),
     }
