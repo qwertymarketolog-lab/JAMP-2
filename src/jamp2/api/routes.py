@@ -156,10 +156,11 @@ def build_router(
     immutable_code_version = (
         code_version or os.getenv("JAMP2_CODE_VERSION") or os.getenv("GITHUB_SHA")
     )
-    provider_map = providers or {
-        "moex": MoexProvider(),
-        "coingecko": CoinGeckoProvider(),
-    }
+    provider_map = (
+        providers
+        if providers is not None
+        else {"moex": MoexProvider(), "coingecko": CoinGeckoProvider()}
+    )
     router = APIRouter(prefix="/v1", tags=["trust-layer"])
 
     async def require_api_key(
