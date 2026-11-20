@@ -10,7 +10,7 @@ from typing import Any
 import httpx
 
 from jamp2.api.app import create_app
-from jamp2.domain.claim import Claim
+from jamp2.domain.claim import NormalizedClaim
 from jamp2.evidence.model import EvidenceRecord
 from jamp2.evidence.verdict import VerdictRecord
 from jamp2.providers.base import ProviderResult
@@ -19,7 +19,7 @@ from jamp2.providers.base import ProviderResult
 def request_payload() -> dict[str, object]:
     return {
         "text": "SBER share price is 300 RUB",
-        "subject": {"kind": "moex_security", "identifier": "SBER"},
+        "subject": {"kind": "equity_security", "identifier": "SBER"},
         "predicate": "price",
         "expected_value": 300,
         "unit": "RUB",
@@ -58,7 +58,7 @@ class StubProvider:
         self.valid_digest = valid_digest
         self.url = url
 
-    def verify_claim(self, claim: Claim) -> ProviderResult:
+    def verify_claim(self, claim: NormalizedClaim) -> ProviderResult:
         self.calls += 1
         raw = b'{"last":300}'
         digest = (
