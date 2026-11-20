@@ -15,7 +15,8 @@ import urllib.parse
 import urllib.request
 from typing import Any
 
-from jamp2.domain.claim import Claim as Jamp2Claim, NormalizedClaim
+from jamp2.domain.claim import Claim as Jamp2Claim
+from jamp2.domain.claim import NormalizedClaim
 from jamp2.providers.base import ProviderResult
 
 MOEX_ISS_BASE = "https://iss.moex.com/iss"
