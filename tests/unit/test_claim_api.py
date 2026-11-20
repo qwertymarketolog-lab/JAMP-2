@@ -208,3 +208,28 @@ def test_digest_mismatch_and_untrusted_provider_url_are_rejected() -> None:
             assert ledger.verdicts == []
 
     asyncio.run(run())
+
+
+def test_missing_idempotency_key_is_rejected_before_provider_fetch() -> None:
+    async def run() -> None:
+        ledger = MemoryLedger()
+        provider = StubProvider()
+        app = create_app(
+            ledger,
+            api_key="correct-key",
+            providers={"moex": provider},
+            code_version="test-code",
+        )
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app),
+            base_url="http://test",
+            headers={"X-API-Key": "correct-key"},
+        ) as client:
+            response = await client.post("/v1/claims/verify", json=request_payload())
+        assert response.status_code == 400
+        assert response.json() == {"error": "IDEMPOTENCY_KEY_REQUIRED"}
+        assert provider.calls == 0
+        assert ledger.records == []
+        assert ledger.idempotency == []
+
+    asyncio.run(run())
