@@ -30,6 +30,7 @@ class MemoryLedger:
     def __init__(self) -> None:
         self.records: list[EvidenceRecord] = []
         self.verdicts: list[VerdictRecord] = []
+        self.idempotency: dict[str, dict[str, Any]] = {}
 
     async def append(self, record: EvidenceRecord) -> EvidenceRecord:
         self.records.append(record)
@@ -53,6 +54,42 @@ class MemoryLedger:
 
     async def list_by_claim(self, claim_id: str) -> list[EvidenceRecord]:
         return [record for record in self.records if record.claim_id == claim_id]
+
+    async def begin_idempotency(
+        self, *, key_hash: str, request_digest: str, claim_id: str
+    ) -> tuple[str, dict[str, Any] | None]:
+        existing = self.idempotency.get(key_hash)
+        if existing is None:
+            self.idempotency[key_hash] = {
+                "request_digest": request_digest,
+                "claim_id": claim_id,
+                "status": "PENDING",
+                "response_payload": None,
+            }
+            return "NEW", None
+        if existing["request_digest"] != request_digest:
+            return "KEY_REUSED", None
+        if existing["status"] == "COMPLETED":
+            return "COMPLETED", existing["response_payload"]
+        if existing["status"] == "PENDING":
+            return "IN_PROGRESS", None
+        return "FAILED", None
+
+    async def complete_idempotency(
+        self, *, key_hash: str, request_digest: str, verdict_id: str,
+        response_payload: dict[str, Any]
+    ) -> None:
+        row = self.idempotency[key_hash]
+        assert row["request_digest"] == request_digest
+        row["status"] = "COMPLETED"
+        row["verdict_id"] = verdict_id
+        row["response_payload"] = response_payload
+
+    async def fail_idempotency(self, *, key_hash: str, request_digest: str) -> None:
+        row = self.idempotency[key_hash]
+        assert row["request_digest"] == request_digest
+        row["status"] = "FAILED"
+
 
 
 class StubProvider:
@@ -162,7 +199,7 @@ def test_digest_mismatch_and_untrusted_provider_url_are_rejected() -> None:
             async with httpx.AsyncClient(
                 transport=httpx.ASGITransport(app=app),
                 base_url="http://test",
-                headers={"X-API-Key": "correct-key"},
+                headers={"X-API-Key": "correct-key", "Idempotency-Key": "unit-test-key-001"},
             ) as client:
                 response = await client.post("/v1/claims/verify", json=request_payload())
             assert response.status_code == 500
