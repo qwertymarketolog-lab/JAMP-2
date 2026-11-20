@@ -61,7 +61,7 @@ def build_router(ledger: EvidenceLedger) -> APIRouter:
     """Bind a fresh router instance to one ledger implementation."""
     router = APIRouter(prefix="/v1/evidence", tags=["evidence"])
 
-    @router.post("", status_code=status.HTTP_201_CREATED)
+    @router.post("", status_code=status.HTTP_201_CREATED, response_model=None)
     async def create_evidence(
         payload: EvidenceCreate,
     ) -> dict[str, object] | JSONResponse:
@@ -103,7 +103,7 @@ def build_router(ledger: EvidenceLedger) -> APIRouter:
             return _ledger_error(exc)
         return _serialize(stored)
 
-    @router.get("/{evidence_id}")
+    @router.get("/{evidence_id}", response_model=None)
     async def read_evidence(evidence_id: str) -> dict[str, object] | JSONResponse:
         try:
             record = await ledger.get(evidence_id)
