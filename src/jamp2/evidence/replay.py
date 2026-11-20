@@ -180,9 +180,18 @@ def replay_verdict(
         return _inconclusive("CLAIM_SNAPSHOT_INVALID", verdict)
 
     providers = {record.provider for record in records}
-    if providers == {"moex.iss"} and claim.get("subject_kind") == "equity_security":
+    adapter_versions = {record.provider_adapter_version for record in records}
+    if (
+        providers == {"moex.iss"}
+        and adapter_versions == {"moex-iss-adapter-v1"}
+        and claim.get("subject_kind") == "equity_security"
+    ):
         status, reason, observed = _replay_moex(verdict, records, claim)
-    elif providers == {"coingecko"} and claim.get("subject_kind") == "crypto_asset":
+    elif (
+        providers == {"coingecko"}
+        and adapter_versions == {"coingecko-adapter-v1"}
+        and claim.get("subject_kind") == "crypto_asset"
+    ):
         status, reason, observed = _replay_coingecko(records, claim)
     else:
         return _inconclusive("PROVIDER_SUBJECT_MISMATCH", verdict)
