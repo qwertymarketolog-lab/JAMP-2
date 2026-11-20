@@ -12,7 +12,7 @@ from datetime import UTC, datetime
 from typing import Protocol
 from urllib.parse import urlsplit
 
-from fastapi import APIRouter, Header, HTTPException, status
+from fastapi import APIRouter, Depends, Header, HTTPException, status
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import JSONResponse
 
@@ -164,7 +164,7 @@ def build_router(
     @router.post("/claims/verify", status_code=status.HTTP_201_CREATED, response_model=None)
     async def verify_claim(
         payload: ClaimVerifyRequest,
-        _: None = __import__("fastapi").Depends(require_api_key),
+        _: None = Depends(require_api_key),
     ) -> dict[str, object] | JSONResponse:
         configuration = _provider_configuration(payload.subject.kind, payload.unit)
         if configuration is None:
@@ -236,7 +236,7 @@ def build_router(
     @router.get("/evidence/{evidence_id}", response_model=None)
     async def read_evidence(
         evidence_id: str,
-        _: None = __import__("fastapi").Depends(require_api_key),
+        _: None = Depends(require_api_key),
     ) -> dict[str, object] | JSONResponse:
         try:
             record = await ledger.get(evidence_id)
