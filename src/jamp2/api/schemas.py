@@ -12,7 +12,7 @@ class ClaimSubject(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    kind: Literal["moex_security", "coingecko_coin"]
+    kind: Literal["equity_security", "crypto_asset"]
     identifier: str = Field(min_length=1, max_length=120)
 
 
