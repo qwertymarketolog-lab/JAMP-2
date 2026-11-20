@@ -28,7 +28,11 @@ pytestmark = pytest.mark.skipif(
 class StubProvider:
     """Deterministic adapter fixture; HTTP transport is tested separately."""
 
+    def __init__(self) -> None:
+        self.calls = 0
+
     def verify_claim(self, claim: NormalizedClaim) -> ProviderResult:
+        self.calls += 1
         assert claim.predicate == "price"
         assert claim.subject_identifier == "SBER"
         raw = b'{"marketdata":{"LAST":300}}'
@@ -68,10 +72,11 @@ def test_api_server_verifies_claim_persists_raw_evidence_and_reads_it() -> None:
     async def run() -> None:
         ledger = PostgresLedger(DATABASE_URL)
         await reset_ledger(ledger)
+        provider = StubProvider()
         application = create_app(
             ledger,
             api_key="integration-test-key",
-            providers={"moex": StubProvider()},
+            providers={"moex": provider},
             code_version="integration-test-sha",
         )
         async with httpx.AsyncClient(
@@ -93,6 +98,13 @@ def test_api_server_verifies_claim_persists_raw_evidence_and_reads_it() -> None:
             assert verdict_record["policy_version"] == "provider-defaults-v1"
             assert verdict_record["code_version"] == "integration-test-sha"
             assert verdict_record["canonicalization_version"] == "jamp-json-nfc-v1"
+            verdict_id = body["verdict_id"]
+            replay = await client.post(f"/v1/verdicts/{verdict_id}/replay")
+            assert replay.status_code == 200
+            assert replay.json()["replay_status"] == "VERIFIED"
+            assert replay.json()["matches_original"] is True
+            assert replay.json()["network_calls"] == 0
+            assert provider.calls == 1
 
             fetched = await client.get(f"/v1/evidence/{evidence_id}")
             assert fetched.status_code == 200
