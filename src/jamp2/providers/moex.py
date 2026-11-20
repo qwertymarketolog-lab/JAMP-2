@@ -15,7 +15,7 @@ import urllib.parse
 import urllib.request
 from typing import Any
 
-from jamp2.domain.claim import Claim as Jamp2Claim
+from jamp2.domain.claim import Claim as Jamp2Claim, NormalizedClaim
 from jamp2.providers.base import ProviderResult
 
 MOEX_ISS_BASE = "https://iss.moex.com/iss"
@@ -387,5 +387,14 @@ def verify_claim(claim: Jamp2Claim) -> ProviderResult:
     return ProviderResult(status, details, raw_evidence)
 
 class MoexProvider:
-    def verify_claim(self, claim: Jamp2Claim) -> ProviderResult:
-        return verify_claim(claim)
+    def verify_claim(self, claim: NormalizedClaim) -> ProviderResult:
+        if claim.subject_kind != "equity_security":
+            return ProviderResult(E4_OUT_OF_SCOPE, {"reason": "SUBJECT_KIND_NOT_SUPPORTED"})
+        provider_claim = Jamp2Claim(
+            claim.text,
+            claim.predicate,
+            claim.subject_identifier,
+            claim.expected_value,
+            claim.unit,
+        )
+        return verify_claim(provider_claim)
