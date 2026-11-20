@@ -388,6 +388,7 @@ def test_multi_source_partial_timeout_is_ambiguous_and_timeout_is_ledgered() -> 
         assert failure.provider == "source-b"
         assert failure.http_status is None
         assert failure.body_complete is False
+        assert isinstance(failure.parsed_value, dict)
         assert failure.parsed_value["source_status"] == "TIMEOUT"
         assert ledger.verdicts[0].reason_codes[0] == "REQUIRED_SOURCE_QUORUM_INCOMPLETE"
 
