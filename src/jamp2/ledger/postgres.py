@@ -9,6 +9,7 @@ from datetime import datetime
 
 from sqlalchemy import (
     BigInteger,
+    Boolean,
     DateTime,
     Identity,
     Integer,
@@ -76,6 +77,10 @@ class EvidenceRow(Base):
     verdict_status: Mapped[str] = mapped_column(String(64))
     parent_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
     canonicalization_version: Mapped[str] = mapped_column(String(64))
+    source_timestamp: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    body_complete: Mapped[bool] = mapped_column(Boolean)
+    provider_adapter_version: Mapped[str] = mapped_column(String(64))
+    parser_version: Mapped[str] = mapped_column(String(64))
     record_hash: Mapped[str] = mapped_column(String(64))
 
 
@@ -118,6 +123,10 @@ def _to_record(row: EvidenceRow) -> EvidenceRecord:
         verdict_status=row.verdict_status,
         parent_hash=row.parent_hash,
         canonicalization_version=row.canonicalization_version,
+        source_timestamp=row.source_timestamp,
+        body_complete=row.body_complete,
+        provider_adapter_version=row.provider_adapter_version,
+        parser_version=row.parser_version,
     )
 
 
@@ -191,6 +200,10 @@ class PostgresLedger:
                         verdict_status=linked_record.verdict_status,
                         parent_hash=linked_record.parent_hash,
                         canonicalization_version=linked_record.canonicalization_version,
+                        source_timestamp=linked_record.source_timestamp,
+                        body_complete=linked_record.body_complete,
+                        provider_adapter_version=linked_record.provider_adapter_version,
+                        parser_version=linked_record.parser_version,
                         record_hash=record_hash,
                     )
                 )
