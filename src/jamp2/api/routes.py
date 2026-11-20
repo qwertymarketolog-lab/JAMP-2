@@ -156,11 +156,7 @@ def _evidence_record(
         parsed_value=parsed_value,
         verdict_status=verdict_status,
         parent_hash=None,
-        source_timestamp=(
-            parsed_value.get("trade_date")
-            if isinstance(parsed_value.get("trade_date"), str)
-            else None
-        ),
+        source_timestamp=None,
         body_complete=body_complete,
         provider_adapter_version=adapter_version,
         parser_version="jamp-provider-json-v1",
