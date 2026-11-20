@@ -162,6 +162,7 @@ class SourceObservationInput:
     identifiers: tuple[str, ...]
     quote_currency: str
     price_type: str
+    market_calendar_valid: bool | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -235,6 +236,17 @@ def evaluate_source_policy(
                     observed_at,
                     fetched_at,
                     "SOURCE_IDENTITY_OR_QUOTE_MISMATCH",
+                )
+            )
+            continue
+        if policy.market_calendar_required and item.market_calendar_valid is not True:
+            eligibility.append(
+                SourceEligibility(
+                    provider_id,
+                    "INCOMPLETE",
+                    observed_at,
+                    fetched_at,
+                    "SOURCE_MARKET_CALENDAR_UNCONFIRMED",
                 )
             )
             continue
