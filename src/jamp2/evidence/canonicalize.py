@@ -7,6 +7,8 @@ import unicodedata
 
 from jamp2.evidence.model import JSONValue
 
+CANONICALIZATION_VERSION = "jamp-json-nfc-v1"
+
 
 def _normalize(value: JSONValue) -> JSONValue:
     if isinstance(value, str):
