@@ -259,18 +259,19 @@ def evaluate_source_policy(
     reasons: list[str] = []
     valid = [item for item in eligibility if item.observation_status == "VALID"]
     independent = False
-    if policy.verification_mode == "MULTI_SOURCE" and valid:
-        provenances = tuple(
-            provenance_by_id[source]
-            for source in policy.required_sources
-            if source in provenance_by_id
-        )
-        independent = (
-            len(provenances) == len(policy.required_sources)
-            and provenance_is_independent(provenances)
-        )
-        if not independent:
-            reasons.append("ERR_INCOMPATIBLE_PROVENANCE")
+    if policy.verification_mode == "MULTI_SOURCE":
+        if valid:
+            provenances = tuple(
+                provenance_by_id[source]
+                for source in policy.required_sources
+                if source in provenance_by_id
+            )
+            independent = (
+                len(provenances) == len(policy.required_sources)
+                and provenance_is_independent(provenances)
+            )
+            if not independent:
+                reasons.append("ERR_INCOMPATIBLE_PROVENANCE")
     else:
         reasons.append("ERR_SINGLE_SOURCE_FORCED")
 
