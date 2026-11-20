@@ -52,6 +52,10 @@ def _serialize(record: EvidenceRecord) -> dict[str, object]:
         "parsed_value": record.parsed_value,
         "verdict_status": record.verdict_status,
         "canonicalization_version": record.canonicalization_version,
+        "source_timestamp": record.source_timestamp,
+        "body_complete": record.body_complete,
+        "provider_adapter_version": record.provider_adapter_version,
+        "parser_version": record.parser_version,
         "parent_hash": record.parent_hash,
         "record_hash": compute_record_hash(record),
     }
@@ -83,12 +87,12 @@ def _ledger_error(exc: Exception) -> JSONResponse:
 
 def _provider_configuration(
     subject_kind: str, unit: str
-) -> tuple[str, str, str] | None:
+) -> tuple[str, str, str, str] | None:
     """Resolve only explicit supported subject kinds to fixed provider identities."""
     if subject_kind == "equity_security" and unit == "RUB":
-        return "moex", "moex.iss", "iss.moex.com"
+        return "moex", "moex.iss", "iss.moex.com", "moex-iss-adapter-v1"
     if subject_kind == "crypto_asset" and unit == "USD":
-        return "coingecko", "coingecko", "api.coingecko.com"
+        return "coingecko", "coingecko", "api.coingecko.com", "coingecko-adapter-v1"
     return None
 
 
@@ -97,6 +101,7 @@ def _evidence_record(
     claim_id: str,
     provider_id: str,
     allowed_host: str,
+    adapter_version: str,
     observation: dict[str, object],
     parsed_value: dict[str, Any],
     verdict_status: str,
@@ -142,6 +147,14 @@ def _evidence_record(
         parsed_value=parsed_value,
         verdict_status=verdict_status,
         parent_hash=None,
+        source_timestamp=(
+            parsed_value.get("trade_date")
+            if isinstance(parsed_value.get("trade_date"), str)
+            else None
+        ),
+        body_complete=body_complete,
+        provider_adapter_version=adapter_version,
+        parser_version="jamp-provider-json-v1",
     )
 
 
@@ -191,7 +204,7 @@ def build_router(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                 content={"error": "UNSUPPORTED_SUBJECT_UNIT_COMBINATION"},
             )
-        provider_key, provider_id, allowed_host = configuration
+        provider_key, provider_id, allowed_host, adapter_version = configuration
         if not immutable_code_version:
             return JSONResponse(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -241,6 +254,7 @@ def build_router(
                     claim_id=claim_id,
                     provider_id=provider_id,
                     allowed_host=allowed_host,
+                    adapter_version=adapter_version,
                     observation=observation,
                     parsed_value=result.details,
                     verdict_status="OBSERVATION_CAPTURED",
