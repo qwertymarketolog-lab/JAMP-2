@@ -18,7 +18,8 @@ import urllib.request
 from collections import deque
 from typing import Any
 
-from jamp2.domain.claim import Claim as Jamp2Claim, NormalizedClaim
+from jamp2.domain.claim import Claim as Jamp2Claim
+from jamp2.domain.claim import NormalizedClaim
 from jamp2.providers.base import ProviderResult
 
 COINGECKO_BASE = "https://api.coingecko.com/api/v3"
