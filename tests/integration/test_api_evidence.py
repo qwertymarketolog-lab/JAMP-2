@@ -29,7 +29,7 @@ class StubProvider:
     """Deterministic adapter fixture; HTTP transport is tested separately."""
 
     def verify_claim(self, claim: NormalizedClaim) -> ProviderResult:
-        assert claim.type == "price"
+        assert claim.predicate == "price"
         assert claim.subject_identifier == "SBER"
         raw = b'{"marketdata":{"LAST":300}}'
         return ProviderResult(
