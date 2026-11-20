@@ -109,6 +109,9 @@ async def _fetch_one(
             if not raw_evidence:
                 status = "EVIDENCE_NOT_CAPTURED"
                 details = {"reason": "SOURCE_EVIDENCE_NOT_CAPTURED"}
+            elif any(item.get("body_complete") is not True for item in raw_evidence):
+                status = "INCOMPLETE_EVIDENCE"
+                details = {"reason": "SOURCE_BODY_INCOMPLETE"}
         except TimeoutError:
             status = "TIMEOUT"
             details = {"reason": "PROVIDER_TIMEOUT"}
@@ -171,6 +174,9 @@ async def arbitrate(
         elif source_statuses == {"E4_CONTRADICTED"}:
             verdict = "CONTRADICTED"
             reasons.append("ALL_REQUIRED_SOURCES_CONTRADICT_CLAIM")
+        elif len(source_statuses) > 1:
+            verdict = "AMBIGUOUS"
+            reasons.append("SOURCE_VERDICTS_DISAGREE")
         else:
             verdict = "INCONCLUSIVE"
             reasons.append("SOURCE_RESULTS_NOT_QUALIFIED")
