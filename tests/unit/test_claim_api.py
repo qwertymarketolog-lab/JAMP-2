@@ -230,6 +230,6 @@ def test_missing_idempotency_key_is_rejected_before_provider_fetch() -> None:
         assert response.json() == {"error": "IDEMPOTENCY_KEY_REQUIRED"}
         assert provider.calls == 0
         assert ledger.records == []
-        assert ledger.idempotency == []
+        assert ledger.idempotency == {}
 
     asyncio.run(run())
