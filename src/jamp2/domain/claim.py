@@ -1,8 +1,8 @@
 """Provider-independent bounded factual claim."""
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass
 import math
+from dataclasses import asdict, dataclass
 from typing import Any
 
 
