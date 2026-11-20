@@ -27,6 +27,10 @@ class EvidenceRecord:
     verdict_status: str
     parent_hash: str | None
     canonicalization_version: str = "jamp-json-nfc-v1"
+    source_timestamp: str | None = None
+    body_complete: bool = True
+    provider_adapter_version: str = "provider-adapter-v1"
+    parser_version: str = "provider-parser-v1"
 
     def __post_init__(self) -> None:
         required_strings = (
@@ -37,6 +41,8 @@ class EvidenceRecord:
             ("raw_sha256", self.raw_sha256),
             ("verdict_status", self.verdict_status),
             ("canonicalization_version", self.canonicalization_version),
+            ("provider_adapter_version", self.provider_adapter_version),
+            ("parser_version", self.parser_version),
         )
         for field_name, value in required_strings:
             if not isinstance(value, str) or not value.strip():
@@ -47,6 +53,10 @@ class EvidenceRecord:
             or not 100 <= self.http_status <= 599
         ):
             raise ValueError("http_status must be an HTTP status code or null")
+        if self.source_timestamp is not None and not isinstance(self.source_timestamp, str):
+            raise ValueError("source_timestamp must be a string or null")
+        if not isinstance(self.body_complete, bool):
+            raise ValueError("body_complete must be a boolean")
         if not isinstance(self.raw_body_bytes, bytes):
             raise ValueError("raw_body_bytes must be bytes")
         if not isinstance(self.captured_at_utc, datetime):
