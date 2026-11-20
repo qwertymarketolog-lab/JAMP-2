@@ -130,7 +130,6 @@ def _evidence_record(
         or not isinstance(source_digest, str)
         or not isinstance(http_status, int)
         or not isinstance(body_complete, bool)
-        or not body_complete
     ):
         raise IntegrityViolation("provider returned incomplete evidence metadata")
     parsed_url = urlsplit(url)
