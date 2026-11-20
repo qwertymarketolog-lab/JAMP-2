@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import base64
 import hashlib
+from datetime import UTC, datetime
 import json
 import math
 import threading
@@ -71,6 +72,8 @@ def _get_json(
             raw_evidence.append({
                 "source": "coingecko",
                 "url": url,
+                "provider_observed_at": None,
+                "fetched_at": datetime.now(UTC).isoformat(),
                 "status_code": exc.code,
                 "body_complete": True,
                 "raw_body_base64": base64.b64encode(body).decode("ascii"),
@@ -326,7 +329,16 @@ def verify_claim(claim: Jamp2Claim) -> ProviderResult:
         claim.ticker, claim_type, claim.value, capture_raw=True
     )
     raw_evidence = details.pop("raw_evidence", [])
-    return ProviderResult(status, details, raw_evidence)
+    return ProviderResult(
+        status,
+        {
+            **details,
+            "source_identifiers": [claim.ticker] if status in {E4_VERIFIED, E4_CONTRADICTED} else [],
+            "quote_currency": claim.currency or "USD",
+            "price_type": "SPOT",
+        },
+        raw_evidence,
+    )
 
 class CoinGeckoProvider:
     def verify_claim(self, claim: NormalizedClaim) -> ProviderResult:
