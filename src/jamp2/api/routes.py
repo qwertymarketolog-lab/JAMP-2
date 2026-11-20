@@ -323,6 +323,7 @@ def build_router(
                     "claim": claim_snapshot,
                     "source_status": outcome.status,
                     "source_details": outcome.details,
+                    "provider_result": outcome.details,
                     "trade_date": outcome.details.get("trade_date"),
                 }
                 if outcome.raw_evidence:
