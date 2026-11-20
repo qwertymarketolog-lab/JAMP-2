@@ -224,8 +224,12 @@ async def arbitrate(
             outcome,
             details={
                 **outcome.details,
-                "observation_status": eligibility_by_id[outcome.source.provider_id].observation_status,
-                "observation_reason_code": eligibility_by_id[outcome.source.provider_id].reason_code,
+                "observation_status": eligibility_by_id[
+                    outcome.source.provider_id
+                ].observation_status,
+                "observation_reason_code": eligibility_by_id[
+                    outcome.source.provider_id
+                ].reason_code,
                 "verification_mode": gate.verification_mode,
                 "independent_cross_check": gate.independent_cross_check,
             },
