@@ -1,26 +1,28 @@
-"""Transport schemas for evidence ingestion and retrieval."""
+"""Strict transport schemas for server-side claim verification."""
 
 from __future__ import annotations
 
-from datetime import datetime
+from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, JsonValue
+from pydantic import BaseModel, ConfigDict, Field
 
 
-class EvidenceCreate(BaseModel):
-    """Client-supplied evidence fields; chain linkage remains server-owned."""
+class ClaimSubject(BaseModel):
+    """Typed provider-independent subject; identifiers are interpreted by adapters."""
 
     model_config = ConfigDict(extra="forbid")
 
-    evidence_id: str = Field(min_length=1, max_length=255)
-    claim_id: str = Field(min_length=1, max_length=255)
-    provider: str = Field(min_length=1, max_length=255)
-    url: str = Field(min_length=1)
-    http_status: int | None = Field(default=None, ge=100, le=599)
-    raw_body_base64: str
-    raw_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
-    captured_at_utc: datetime
-    # Pydantic v2 cannot build JSON schema for recursive type aliases.
-    # Use pydantic.JsonValue for the API transport layer.
-    parsed_value: JsonValue
-    verdict_status: str = Field(min_length=1, max_length=64)
+    kind: Literal["moex_security", "coingecko_coin"]
+    identifier: str = Field(min_length=1, max_length=120)
+
+
+class ClaimVerifyRequest(BaseModel):
+    """Only caller-authored claim data; source evidence is always server-acquired."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    text: str = Field(min_length=1, max_length=2000)
+    subject: ClaimSubject
+    predicate: Literal["price"]
+    expected_value: float = Field(gt=0, allow_inf_nan=False)
+    unit: Literal["RUB", "USD"]
