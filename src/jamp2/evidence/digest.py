@@ -30,6 +30,10 @@ def compute_record_hash(record: EvidenceRecord) -> str:
         "verdict_status": record.verdict_status,
         "parent_hash": record.parent_hash,
         "canonicalization_version": record.canonicalization_version,
+        "source_timestamp": record.source_timestamp,
+        "body_complete": record.body_complete,
+        "provider_adapter_version": record.provider_adapter_version,
+        "parser_version": record.parser_version,
     }
     return compute_sha256(canonicalize(payload))
 
