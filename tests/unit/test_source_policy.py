@@ -55,6 +55,7 @@ def observation(provider, observed_at=NOW - timedelta(seconds=2), **overrides):
         "identifiers": ("isin", "ticker"),
         "quote_currency": "RUB",
         "price_type": "LAST_DEAL",
+        "market_calendar_valid": True,
     }
     values.update(overrides)
     return SourceObservationInput(**values)
@@ -182,3 +183,20 @@ def test_multi_source_requires_at_least_two_sources():
             max_time_skew_seconds=5,
             verification_mode="MULTI_SOURCE",
         )
+
+
+def test_required_market_calendar_must_be_confirmed():
+    result = evaluate_source_policy(
+        policy(provenance_items=independent_pair()),
+        (
+            observation("a", market_calendar_valid=None),
+            observation("b"),
+        ),
+        now=NOW,
+    )
+    assert result.verdict_status == "AMBIGUOUS"
+    assert result.observations[0].observation_status == "INCOMPLETE"
+    assert (
+        result.observations[0].reason_code
+        == "SOURCE_MARKET_CALENDAR_UNCONFIRMED"
+    )
