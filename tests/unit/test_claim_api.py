@@ -110,9 +110,15 @@ class StubProvider:
             if not self.valid_digest
             else hashlib.sha256(raw).hexdigest()
         )
+        observed_at = datetime.now(UTC)
         return ProviderResult(
             "E4_VERIFIED",
-            {"observed_last": 300.0},
+            {
+                "observed_last": 300.0,
+                "source_identifiers": [claim.subject_identifier],
+                "quote_currency": claim.unit,
+                "price_type": "LAST_DEAL",
+            },
             [
                 {
                     "source": "moex.iss",
@@ -284,6 +290,8 @@ class DeterministicSourceProvider:
                     "url": f"https://{self.host}/price",
                     "status_code": 200,
                     "body_complete": True,
+                    "provider_observed_at": observed_at.isoformat(),
+                    "fetched_at": (observed_at + timedelta(milliseconds=10)).isoformat(),
                     "raw_body_base64": base64.b64encode(raw).decode("ascii"),
                     "sha256_body": hashlib.sha256(raw).hexdigest(),
                 }
