@@ -6,7 +6,7 @@ import os
 from collections.abc import Sequence
 from typing import Any
 from dataclasses import replace
-from datetime import datetime
+from datetime import UTC, datetime
 
 from sqlalchemy import (
     BigInteger,
@@ -451,7 +451,7 @@ class PostgresLedger:
                         status="COMPLETED",
                         verdict_id=verdict_id,
                         response_payload=response_payload,
-                        completed_at_utc=datetime.now().astimezone(),
+                        completed_at_utc=datetime.now(UTC),
                     )
                 )
                 if result.rowcount != 1:
