@@ -285,6 +285,7 @@ class DeterministicSourceProvider:
                 "source_identifiers": [claim.subject_identifier],
                 "quote_currency": claim.unit,
                 "price_type": "LAST_DEAL",
+                "market_calendar_valid": True,
             },
             [
                 {
