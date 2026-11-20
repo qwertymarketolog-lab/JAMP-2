@@ -12,6 +12,7 @@ import httpx
 from jamp2.api.app import create_app
 from jamp2.domain.claim import Claim
 from jamp2.evidence.model import EvidenceRecord
+from jamp2.evidence.verdict import VerdictRecord
 from jamp2.providers.base import ProviderResult
 
 
@@ -28,6 +29,7 @@ def request_payload() -> dict[str, object]:
 class MemoryLedger:
     def __init__(self) -> None:
         self.records: list[EvidenceRecord] = []
+        self.verdicts: list[VerdictRecord] = []
 
     async def append(self, record: EvidenceRecord) -> EvidenceRecord:
         self.records.append(record)
@@ -36,6 +38,16 @@ class MemoryLedger:
     async def get(self, evidence_id: str) -> EvidenceRecord | None:
         return next(
             (record for record in self.records if record.evidence_id == evidence_id),
+            None,
+        )
+
+    async def append_verdict(self, record: VerdictRecord) -> VerdictRecord:
+        self.verdicts.append(record)
+        return record
+
+    async def get_verdict(self, verdict_id: str) -> VerdictRecord | None:
+        return next(
+            (record for record in self.verdicts if record.verdict_id == verdict_id),
             None,
         )
 
@@ -74,7 +86,9 @@ def test_missing_or_invalid_api_key_has_no_provider_or_ledger_side_effects() -> 
     async def run() -> None:
         ledger = MemoryLedger()
         provider = StubProvider()
-        app = create_app(ledger, api_key="correct-key", providers={"moex": provider})
+        app = create_app(
+            ledger, api_key="correct-key", providers={"moex": provider}, code_version="test-code"
+        )
         async with httpx.AsyncClient(
             transport=httpx.ASGITransport(app=app), base_url="http://test"
         ) as client:
@@ -107,6 +121,7 @@ def test_missing_server_api_key_configuration_fails_closed(monkeypatch: Any) -> 
         assert response.status_code == 503
         assert provider.calls == 0
         assert ledger.records == []
+        assert ledger.verdicts == []
 
     asyncio.run(run())
 
@@ -139,6 +154,7 @@ def test_digest_mismatch_and_untrusted_provider_url_are_rejected() -> None:
                 ledger,
                 api_key="correct-key",
                 providers={"moex": provider},
+                code_version="test-code",
             )
             async with httpx.AsyncClient(
                 transport=httpx.ASGITransport(app=app),
@@ -149,5 +165,6 @@ def test_digest_mismatch_and_untrusted_provider_url_are_rejected() -> None:
             assert response.status_code == 500
             assert response.json() == {"error": "INTEGRITY_VIOLATION"}
             assert ledger.records == []
+            assert ledger.verdicts == []
 
     asyncio.run(run())
