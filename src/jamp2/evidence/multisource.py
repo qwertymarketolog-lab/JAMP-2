@@ -203,6 +203,11 @@ async def arbitrate(
                 else (),
                 quote_currency=str(outcome.details.get("quote_currency", "")),
                 price_type=str(outcome.details.get("price_type", "")),
+                market_calendar_valid=(
+                    outcome.details.get("market_calendar_valid")
+                    if isinstance(outcome.details.get("market_calendar_valid"), bool)
+                    else None
+                ),
             )
         )
     gate = evaluate_source_policy(
