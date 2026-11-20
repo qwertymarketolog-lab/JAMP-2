@@ -9,7 +9,7 @@ import hmac
 import os
 import uuid
 from datetime import UTC, datetime
-from typing import Protocol
+from typing import Any, Protocol
 from urllib.parse import urlsplit
 
 from fastapi import APIRouter, Depends, Header, HTTPException, status
@@ -84,7 +84,7 @@ def _evidence_record(
     provider_id: str,
     allowed_host: str,
     observation: dict[str, object],
-    parsed_value: dict[str, object],
+    parsed_value: dict[str, Any],
     verdict_status: str,
 ) -> EvidenceRecord:
     """Validate adapter capture metadata and construct a server-owned record."""
