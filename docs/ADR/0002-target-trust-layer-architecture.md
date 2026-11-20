@@ -1,6 +1,6 @@
 # ADR-0002: Target Architecture for the JAMP 2 Trust Layer
 
-- **Status:** Proposed — pending project-owner approval
+- **Status:** ACCEPTED — approved by project owner on 2026-11-20
 - **Date:** 2026-11-20
 - **Decision owner:** JAMP project owner
 - **Supersedes:** None
@@ -269,7 +269,7 @@ Any implementation must be split into narrowly scoped changes, reviewed against 
 
 ## 12. Current state
 
-- **ADR status:** PROPOSED — not yet approved.
+- **ADR status:** ACCEPTED — approved by project owner on 2026-11-20.
 - **PR #3:** OPEN / HOLD; no merge authorized.
 - **Source code:** unchanged by this ADR.
 - **JAMP 1:** unchanged; Frozen Core remains governed by ADR-0001 and its existing invariant.
