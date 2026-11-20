@@ -12,7 +12,6 @@ from typing import Any, Protocol, cast
 from urllib.parse import urlsplit
 
 from fastapi import APIRouter, Depends, Header, HTTPException, status
-from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import JSONResponse
 
 from jamp2.api.schemas import ClaimVerifyRequest
