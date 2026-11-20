@@ -259,7 +259,7 @@ def evaluate_source_policy(
     reasons: list[str] = []
     valid = [item for item in eligibility if item.observation_status == "VALID"]
     independent = False
-    if policy.verification_mode == "MULTI_SOURCE":
+    if policy.verification_mode == "MULTI_SOURCE" and valid:
         provenances = tuple(
             provenance_by_id[source]
             for source in policy.required_sources
@@ -300,7 +300,7 @@ def evaluate_source_policy(
 
     if all(item == "FAILED" for item in statuses):
         verdict = "INCONCLUSIVE"
-        reasons.append("ALL_REQUIRED_SOURCES_FAILED")
+        reasons.append("ALL_REQUIRED_SOURCES_UNAVAILABLE")
     elif any(item != "VALID" for item in statuses):
         verdict = "AMBIGUOUS"
         reasons.append("ERR_QUORUM_NOT_MET")
