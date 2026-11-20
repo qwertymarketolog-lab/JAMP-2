@@ -20,7 +20,7 @@ def create_app(
     application = FastAPI(title="JAMP 2 Trust Layer API", version="1.0.0")
     application.include_router(
         build_router(
-            ledger or PostgresLedger(),
+            ledger if ledger is not None else PostgresLedger(),
             api_key=api_key,
             providers=providers,
             code_version=code_version,
