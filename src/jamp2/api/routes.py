@@ -16,7 +16,7 @@ from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import JSONResponse
 
 from jamp2.api.schemas import ClaimVerifyRequest
-from jamp2.domain.claim import Claim
+from jamp2.domain.claim import NormalizedClaim
 from jamp2.evidence.canonicalize import CANONICALIZATION_VERSION
 from jamp2.evidence.digest import compute_record_hash, compute_sha256
 from jamp2.evidence.model import EvidenceRecord
@@ -84,9 +84,9 @@ def _provider_configuration(
     subject_kind: str, unit: str
 ) -> tuple[str, str, str] | None:
     """Resolve only explicit supported subject kinds to fixed provider identities."""
-    if subject_kind == "moex_security" and unit == "RUB":
+    if subject_kind == "equity_security" and unit == "RUB":
         return "moex", "moex.iss", "iss.moex.com"
-    if subject_kind == "coingecko_coin" and unit == "USD":
+    if subject_kind == "crypto_asset" and unit == "USD":
         return "coingecko", "coingecko", "api.coingecko.com"
     return None
 
@@ -202,12 +202,13 @@ def build_router(
                 content={"error": "PROVIDER_NOT_CONFIGURED"},
             )
         claim_id = str(uuid.uuid4())
-        claim = Claim(
+        claim = NormalizedClaim(
             text=payload.text,
-            type=payload.predicate,
-            ticker=payload.subject.identifier,
-            value=payload.expected_value,
-            currency=payload.unit,
+            subject_kind=payload.subject.kind,
+            subject_identifier=payload.subject.identifier,
+            predicate=payload.predicate,
+            expected_value=payload.expected_value,
+            unit=payload.unit,
         )
         try:
             result: ProviderResult = await run_in_threadpool(provider.verify_claim, claim)
