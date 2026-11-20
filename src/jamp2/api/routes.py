@@ -17,9 +17,16 @@ from fastapi.responses import JSONResponse
 
 from jamp2.api.schemas import ClaimVerifyRequest
 from jamp2.domain.claim import Claim
+from jamp2.evidence.canonicalize import CANONICALIZATION_VERSION
 from jamp2.evidence.digest import compute_record_hash, compute_sha256
 from jamp2.evidence.model import EvidenceRecord
-from jamp2.ledger.postgres import DuplicateEvidence, IntegrityViolation, LedgerUnavailable
+from jamp2.evidence.verdict import VerdictRecord
+from jamp2.ledger.postgres import (
+    DuplicateEvidence,
+    DuplicateVerdict,
+    IntegrityViolation,
+    LedgerUnavailable,
+)
 from jamp2.providers.base import Provider, ProviderResult
 from jamp2.providers.coingecko import CoinGeckoProvider
 from jamp2.providers.moex import MoexProvider
@@ -28,6 +35,8 @@ from jamp2.providers.moex import MoexProvider
 class EvidenceLedger(Protocol):
     async def append(self, record: EvidenceRecord) -> EvidenceRecord: ...
     async def get(self, evidence_id: str) -> EvidenceRecord | None: ...
+    async def append_verdict(self, record: VerdictRecord) -> VerdictRecord: ...
+    async def get_verdict(self, verdict_id: str) -> VerdictRecord | None: ...
 
 
 def _serialize(record: EvidenceRecord) -> dict[str, object]:
@@ -52,6 +61,11 @@ def _ledger_error(exc: Exception) -> JSONResponse:
         return JSONResponse(
             status_code=status.HTTP_409_CONFLICT,
             content={"error": "EVIDENCE_ALREADY_EXISTS"},
+        )
+    if isinstance(exc, DuplicateVerdict):
+        return JSONResponse(
+            status_code=status.HTTP_409_CONFLICT,
+            content={"error": "VERDICT_ALREADY_EXISTS"},
         )
     if isinstance(exc, LedgerUnavailable):
         return JSONResponse(
@@ -135,9 +149,13 @@ def build_router(
     *,
     api_key: str | None,
     providers: dict[str, Provider] | None = None,
+    code_version: str | None = None,
 ) -> APIRouter:
     """Bind authenticated claim verification to a ledger and fixed provider adapters."""
     configured_key = api_key if api_key is not None else os.getenv("JAMP2_API_KEY")
+    immutable_code_version = (
+        code_version or os.getenv("JAMP2_CODE_VERSION") or os.getenv("GITHUB_SHA")
+    )
     provider_map = providers or {
         "moex": MoexProvider(),
         "coingecko": CoinGeckoProvider(),
@@ -172,6 +190,11 @@ def build_router(
                 content={"error": "UNSUPPORTED_SUBJECT_UNIT_COMBINATION"},
             )
         provider_key, provider_id, allowed_host = configuration
+        if not immutable_code_version:
+            return JSONResponse(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                content={"error": "CODE_VERSION_NOT_CONFIGURED"},
+            )
         provider = provider_map.get(provider_key)
         if provider is None:
             return JSONResponse(
@@ -217,19 +240,71 @@ def build_router(
                     allowed_host=allowed_host,
                     observation=observation,
                     parsed_value=result.details,
-                    verdict_status=result.status,
+                    verdict_status="OBSERVATION_CAPTURED",
                 )
                 records.append(await ledger.append(record))
         except (DuplicateEvidence, IntegrityViolation, LedgerUnavailable) as exc:
             return _ledger_error(exc)
+        reason = result.details.get("reason")
+        reason_code = reason if isinstance(reason, str) and reason else result.status
+        verdict_record = VerdictRecord(
+            verdict_id=str(uuid.uuid4()),
+            claim_id=claim_id,
+            status=verdict,
+            evidence_ids=tuple(record.evidence_id for record in records),
+            policy_id="jamp2.provider-price-comparison",
+            policy_version="provider-defaults-v1",
+            code_version=immutable_code_version,
+            canonicalization_version=CANONICALIZATION_VERSION,
+            decided_at_utc=datetime.now(UTC),
+            reason_codes=(reason_code,),
+            explanation=(
+                f"{provider_id} provider comparison returned {result.status}; "
+                "see linked raw evidence and version metadata"
+            ),
+        )
+        try:
+            stored_verdict = await ledger.append_verdict(verdict_record)
+        except (DuplicateVerdict, IntegrityViolation, LedgerUnavailable) as exc:
+            return _ledger_error(exc)
         return {
             "claim_id": claim_id,
-            "verdict": verdict,
+            "verdict_id": stored_verdict.verdict_id,
+            "verdict": stored_verdict.status,
             "provider_status": result.status,
             "provider": provider_id,
             "evidence_ids": [record.evidence_id for record in records],
             "evidence_count": len(records),
             "details": result.details,
+        }
+
+    @router.get("/verdicts/{verdict_id}", response_model=None)
+    async def read_verdict(
+        verdict_id: str,
+        _: None = Depends(require_api_key),
+    ) -> dict[str, object] | JSONResponse:
+        try:
+            record = await ledger.get_verdict(verdict_id)
+        except (DuplicateEvidence, DuplicateVerdict, IntegrityViolation, LedgerUnavailable) as exc:
+            return _ledger_error(exc)
+        if record is None:
+            return JSONResponse(
+                status_code=status.HTTP_404_NOT_FOUND,
+                content={"error": "VERDICT_NOT_FOUND"},
+            )
+        return {
+            "verdict_id": record.verdict_id,
+            "claim_id": record.claim_id,
+            "status": record.status,
+            "evidence_ids": list(record.evidence_ids),
+            "policy_id": record.policy_id,
+            "policy_version": record.policy_version,
+            "code_version": record.code_version,
+            "canonicalization_version": record.canonicalization_version,
+            "decided_at_utc": record.decided_at_utc.isoformat(),
+            "reason_codes": list(record.reason_codes),
+            "explanation": record.explanation,
+            "parent_hash": record.parent_hash,
         }
 
     @router.get("/evidence/{evidence_id}", response_model=None)
@@ -239,7 +314,7 @@ def build_router(
     ) -> dict[str, object] | JSONResponse:
         try:
             record = await ledger.get(evidence_id)
-        except (DuplicateEvidence, IntegrityViolation, LedgerUnavailable) as exc:
+        except (DuplicateEvidence, DuplicateVerdict, IntegrityViolation, LedgerUnavailable) as exc:
             return _ledger_error(exc)
         if record is None:
             return JSONResponse(
