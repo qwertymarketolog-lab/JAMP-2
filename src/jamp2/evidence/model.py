@@ -26,6 +26,7 @@ class EvidenceRecord:
     parsed_value: JSONValue
     verdict_status: str
     parent_hash: str | None
+    canonicalization_version: str = "jamp-json-nfc-v1"
 
     def __post_init__(self) -> None:
         required_strings = (
@@ -35,6 +36,7 @@ class EvidenceRecord:
             ("url", self.url),
             ("raw_sha256", self.raw_sha256),
             ("verdict_status", self.verdict_status),
+            ("canonicalization_version", self.canonicalization_version),
         )
         for field_name, value in required_strings:
             if not isinstance(value, str) or not value.strip():
