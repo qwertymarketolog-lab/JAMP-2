@@ -5,8 +5,9 @@ import json
 import urllib.error
 from unittest.mock import MagicMock, patch
 
-from jamp2.domain.claim import Claim
+from jamp2.domain.claim import Claim, NormalizedClaim
 from jamp2.providers import coingecko, moex
+from jamp2.providers.base import ProviderResult
 
 
 def response(payload):
@@ -163,3 +164,69 @@ def test_currency_mismatch_is_out_of_scope_without_http():
         result = moex.verify_claim(Claim("SBER USD", "price", "SBER", 300, "USD"))
     assert result.status == moex.E4_OUT_OF_SCOPE
     mock_open.assert_not_called()
+
+
+@patch("jamp2.providers.moex.verify_claim")
+def test_moex_provider_resolves_only_equity_security(mock_verify):
+    mock_verify.return_value = ProviderResult(moex.E4_VERIFIED, {})
+    claim = NormalizedClaim(
+        "SBER price",
+        "equity_security",
+        "SBER",
+        "price",
+        300,
+        "RUB",
+    )
+    result = moex.MoexProvider().verify_claim(claim)
+    assert result.status == moex.E4_VERIFIED
+    legacy_claim = mock_verify.call_args.args[0]
+    assert legacy_claim.ticker == "SBER"
+    assert legacy_claim.currency == "RUB"
+
+
+@patch("jamp2.providers.moex.verify_claim")
+def test_moex_provider_rejects_crypto_subject_without_source_call(mock_verify):
+    claim = NormalizedClaim(
+        "BTC price",
+        "crypto_asset",
+        "bitcoin",
+        "price",
+        67000,
+        "USD",
+    )
+    result = moex.MoexProvider().verify_claim(claim)
+    assert result.status == moex.E4_OUT_OF_SCOPE
+    mock_verify.assert_not_called()
+
+
+@patch("jamp2.providers.coingecko.verify_claim")
+def test_coingecko_provider_resolves_only_crypto_asset(mock_verify):
+    mock_verify.return_value = ProviderResult(coingecko.E4_VERIFIED, {})
+    claim = NormalizedClaim(
+        "BTC price",
+        "crypto_asset",
+        "bitcoin",
+        "price",
+        67000,
+        "USD",
+    )
+    result = coingecko.CoinGeckoProvider().verify_claim(claim)
+    assert result.status == coingecko.E4_VERIFIED
+    legacy_claim = mock_verify.call_args.args[0]
+    assert legacy_claim.ticker == "bitcoin"
+    assert legacy_claim.currency == "USD"
+
+
+@patch("jamp2.providers.coingecko.verify_claim")
+def test_coingecko_provider_rejects_equity_subject_without_source_call(mock_verify):
+    claim = NormalizedClaim(
+        "SBER price",
+        "equity_security",
+        "SBER",
+        "price",
+        300,
+        "RUB",
+    )
+    result = coingecko.CoinGeckoProvider().verify_claim(claim)
+    assert result.status == coingecko.E4_OUT_OF_SCOPE
+    mock_verify.assert_not_called()
