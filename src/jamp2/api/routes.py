@@ -20,6 +20,7 @@ from jamp2.domain.claim import NormalizedClaim
 from jamp2.evidence.canonicalize import CANONICALIZATION_VERSION
 from jamp2.evidence.digest import compute_record_hash, compute_sha256
 from jamp2.evidence.model import EvidenceRecord
+from jamp2.evidence.replay import replay_verdict
 from jamp2.evidence.verdict import VerdictRecord
 from jamp2.ledger.postgres import (
     DuplicateEvidence,
@@ -37,6 +38,7 @@ class EvidenceLedger(Protocol):
     async def get(self, evidence_id: str) -> EvidenceRecord | None: ...
     async def append_verdict(self, record: VerdictRecord) -> VerdictRecord: ...
     async def get_verdict(self, verdict_id: str) -> VerdictRecord | None: ...
+    async def list_by_claim(self, claim_id: str) -> list[EvidenceRecord]: ...
 
 
 def _serialize(record: EvidenceRecord) -> dict[str, object]:
@@ -336,6 +338,29 @@ def build_router(
             "explanation": record.explanation,
             "parent_hash": record.parent_hash,
         }
+
+    @router.post("/verdicts/{verdict_id}/replay", response_model=None)
+    async def replay_recorded_verdict(
+        verdict_id: str,
+        _: None = Depends(require_api_key),
+    ) -> dict[str, object] | JSONResponse:
+        try:
+            verdict_record = await ledger.get_verdict(verdict_id)
+            if verdict_record is None:
+                return JSONResponse(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    content={"error": "VERDICT_NOT_FOUND"},
+                )
+            claim_records = await ledger.list_by_claim(verdict_record.claim_id)
+        except (DuplicateEvidence, DuplicateVerdict, IntegrityViolation, LedgerUnavailable) as exc:
+            return _ledger_error(exc)
+        evidence_by_id = {record.evidence_id: record for record in claim_records}
+        selected_records = [
+            evidence_by_id[evidence_id]
+            for evidence_id in verdict_record.evidence_ids
+            if evidence_id in evidence_by_id
+        ]
+        return replay_verdict(verdict_record, selected_records)
 
     @router.get("/evidence/{evidence_id}", response_model=None)
     async def read_evidence(
