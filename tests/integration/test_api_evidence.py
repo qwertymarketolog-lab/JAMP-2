@@ -100,6 +100,7 @@ def test_api_server_verifies_claim_persists_raw_evidence_and_reads_it() -> None:
             raw = base64.b64decode(evidence["raw_body_base64"], validate=True)
             assert raw == b'{"marketdata":{"LAST":300}}'
             assert evidence["raw_sha256"] == compute_sha256(raw)
+            assert evidence["canonicalization_version"] == "jamp-json-nfc-v1"
             assert evidence["captured_at_utc"].endswith("+00:00")
 
             missing = await client.get("/v1/evidence/not-found")
