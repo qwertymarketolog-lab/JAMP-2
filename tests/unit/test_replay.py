@@ -83,8 +83,20 @@ def test_moex_replay_reparses_stored_catalog_and_marketdata_bytes() -> None:
         {"marketdata": {"columns": ["SECID", "LAST"], "data": [["SBER", 100.0]]}}
     ).encode()
     records = [
-        evidence("evidence-catalog", "moex.iss", "https://iss.moex.com/iss/securities.json", catalog, claim),
-        evidence("evidence-price", "moex.iss", "https://iss.moex.com/iss/marketdata.json", marketdata, claim),
+        evidence(
+            "evidence-catalog",
+            "moex.iss",
+            "https://iss.moex.com/iss/securities.json",
+            catalog,
+            claim,
+        ),
+        evidence(
+            "evidence-price",
+            "moex.iss",
+            "https://iss.moex.com/iss/marketdata.json",
+            marketdata,
+            claim,
+        ),
     ]
     result = replay_verdict(verdict(("evidence-catalog", "evidence-price")), records)
     assert result["replay_status"] == "VERIFIED"
