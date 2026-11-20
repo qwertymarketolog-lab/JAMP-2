@@ -6,6 +6,7 @@ import asyncio
 import base64
 import hashlib
 import time
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import httpx
@@ -14,6 +15,7 @@ from jamp2.api.app import create_app
 from jamp2.domain.claim import NormalizedClaim
 from jamp2.evidence.model import EvidenceRecord
 from jamp2.evidence.multisource import MultiSourcePolicy, SourceSpec
+from jamp2.evidence.policy import SourcePolicyRecord, SourceProvenance
 from jamp2.evidence.verdict import VerdictRecord
 from jamp2.providers.base import ProviderResult
 
@@ -117,6 +119,8 @@ class StubProvider:
                     "url": self.url,
                     "status_code": 200,
                     "body_complete": True,
+                    "provider_observed_at": observed_at.isoformat(),
+                    "fetched_at": (observed_at + timedelta(milliseconds=10)).isoformat(),
                     "raw_body_base64": base64.b64encode(raw).decode("ascii"),
                     "sha256_body": digest,
                 }
@@ -265,9 +269,15 @@ class DeterministicSourceProvider:
         if self.failure == "error":
             raise RuntimeError("deterministic provider error")
         raw = f'{{"price":{self.value}}}'.encode()
+        observed_at = datetime.now(UTC)
         return ProviderResult(
             "E4_VERIFIED",
-            {"observed_last": self.value},
+            {
+                "observed_last": self.value,
+                "source_identifiers": [claim.subject_identifier],
+                "quote_currency": claim.unit,
+                "price_type": "LAST_DEAL",
+            },
             [
                 {
                     "source": self.source_id,
@@ -282,14 +292,39 @@ class DeterministicSourceProvider:
 
 
 def _two_source_policy(timeout_seconds: float = 0.2) -> MultiSourcePolicy:
+    required_sources = (
+        SourceSpec("source_a", "source-a", "source-a.example", "test-adapter-v1"),
+        SourceSpec("source_b", "source-b", "source-b.example", "test-adapter-v1"),
+    )
+    source_policy = SourcePolicyRecord(
+        policy_id="jamp2.test-two-source",
+        version=1,
+        asset_class="equity_security",
+        required_identifiers=("SBER",),
+        market_calendar_required=True,
+        quote_currency="RUB",
+        price_type="LAST_DEAL",
+        required_sources=("source-a", "source-b"),
+        independence_group="test-independent-exchanges",
+        max_age_seconds=60,
+        max_time_skew_seconds=5,
+        timeout_seconds=timeout_seconds,
+        verification_mode="MULTI_SOURCE",
+        provenance=(
+            SourceProvenance(
+                "source-a", "exchange-a", "direct-last", "network-a", "calc-a", "CONFIRMED"
+            ),
+            SourceProvenance(
+                "source-b", "exchange-b", "direct-last", "network-b", "calc-b", "CONFIRMED"
+            ),
+        ),
+    )
     return MultiSourcePolicy(
         policy_id="jamp2.test-two-source",
         version="test-exact-v1",
-        required_sources=(
-            SourceSpec("source_a", "source-a", "source-a.example", "test-adapter-v1"),
-            SourceSpec("source_b", "source-b", "source-b.example", "test-adapter-v1"),
-        ),
+        required_sources=required_sources,
         timeout_seconds=timeout_seconds,
+        source_policy=source_policy,
     )
 
 
@@ -392,7 +427,7 @@ def test_multi_source_partial_timeout_is_ambiguous_and_timeout_is_ledgered() -> 
         assert failure.body_complete is False
         assert isinstance(failure.parsed_value, dict)
         assert failure.parsed_value["source_status"] == "TIMEOUT"
-        assert ledger.verdicts[0].reason_codes[0] == "REQUIRED_SOURCE_QUORUM_INCOMPLETE"
+        assert "ERR_QUORUM_NOT_MET" in ledger.verdicts[0].reason_codes
 
     asyncio.run(run())
 
