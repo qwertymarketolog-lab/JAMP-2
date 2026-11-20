@@ -8,7 +8,7 @@ import hmac
 import os
 import uuid
 from datetime import UTC, datetime
-from typing import Any, Protocol
+from typing import Any, Protocol, cast
 from urllib.parse import urlsplit
 
 from fastapi import APIRouter, Depends, Header, HTTPException, status
@@ -17,9 +17,9 @@ from fastapi.responses import JSONResponse
 
 from jamp2.api.schemas import ClaimVerifyRequest
 from jamp2.domain.claim import NormalizedClaim
-from jamp2.evidence.canonicalize import CANONICALIZATION_VERSION
+from jamp2.evidence.canonicalize import CANONICALIZATION_VERSION, canonicalize
 from jamp2.evidence.digest import compute_record_hash, compute_sha256
-from jamp2.evidence.model import EvidenceRecord
+from jamp2.evidence.model import EvidenceRecord, JSONValue
 from jamp2.evidence.replay import replay_verdict
 from jamp2.evidence.verdict import VerdictRecord
 from jamp2.ledger.postgres import (
@@ -39,6 +39,14 @@ class EvidenceLedger(Protocol):
     async def append_verdict(self, record: VerdictRecord) -> VerdictRecord: ...
     async def get_verdict(self, verdict_id: str) -> VerdictRecord | None: ...
     async def list_by_claim(self, claim_id: str) -> list[EvidenceRecord]: ...
+    async def begin_idempotency(
+        self, *, key_hash: str, request_digest: str, claim_id: str
+    ) -> tuple[str, dict[str, Any] | None]: ...
+    async def complete_idempotency(
+        self, *, key_hash: str, request_digest: str, verdict_id: str,
+        response_payload: dict[str, Any]
+    ) -> None: ...
+    async def fail_idempotency(self, *, key_hash: str, request_digest: str) -> None: ...
 
 
 def _serialize(record: EvidenceRecord) -> dict[str, object]:
@@ -199,6 +207,7 @@ def build_router(
     async def verify_claim(
         payload: ClaimVerifyRequest,
         _: None = Depends(require_api_key),
+        idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
     ) -> dict[str, object] | JSONResponse:
         configuration = _provider_configuration(payload.subject.kind, payload.unit)
         if configuration is None:
@@ -218,7 +227,62 @@ def build_router(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                 content={"error": "PROVIDER_NOT_CONFIGURED"},
             )
+        if not isinstance(idempotency_key, str) or not 8 <= len(idempotency_key) <= 128:
+            return JSONResponse(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                content={"error": "IDEMPOTENCY_KEY_REQUIRED"},
+            )
+        key_hash = compute_sha256(idempotency_key.encode("utf-8"))
+        request_digest = compute_sha256(
+            canonicalize(cast(JSONValue, payload.model_dump(mode="json")))
+        )
         claim_id = str(uuid.uuid4())
+        try:
+            idempotency_state, cached_response = await ledger.begin_idempotency(
+                key_hash=key_hash,
+                request_digest=request_digest,
+                claim_id=claim_id,
+            )
+        except LedgerUnavailable as exc:
+            return _ledger_error(exc)
+        if idempotency_state == "COMPLETED":
+            if cached_response is None:
+                return JSONResponse(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    content={"error": "IDEMPOTENCY_RESPONSE_MISSING"},
+                )
+            return cached_response
+        if idempotency_state == "KEY_REUSED":
+            return JSONResponse(
+                status_code=status.HTTP_409_CONFLICT,
+                content={"error": "IDEMPOTENCY_KEY_REUSED"},
+            )
+        if idempotency_state == "IN_PROGRESS":
+            return JSONResponse(
+                status_code=status.HTTP_409_CONFLICT,
+                content={"error": "IDEMPOTENCY_REQUEST_IN_PROGRESS"},
+            )
+        if idempotency_state == "FAILED":
+            return JSONResponse(
+                status_code=status.HTTP_409_CONFLICT,
+                content={"error": "IDEMPOTENCY_REQUEST_FAILED"},
+            )
+        if idempotency_state != "NEW":
+            return JSONResponse(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                content={"error": "IDEMPOTENCY_STATE_INVALID"},
+            )
+
+        async def mark_failed() -> JSONResponse | None:
+            try:
+                await ledger.fail_idempotency(
+                    key_hash=key_hash,
+                    request_digest=request_digest,
+                )
+            except LedgerUnavailable as exc:
+                return _ledger_error(exc)
+            return None
+
         claim = NormalizedClaim(
             text=payload.text,
             subject_kind=payload.subject.kind,
@@ -230,6 +294,9 @@ def build_router(
         try:
             result: ProviderResult = await run_in_threadpool(provider.verify_claim, claim)
         except Exception:
+            failure_response = await mark_failed()
+            if failure_response is not None:
+                return failure_response
             return JSONResponse(
                 status_code=status.HTTP_502_BAD_GATEWAY,
                 content={"error": "PROVIDER_VERIFICATION_FAILED"},
@@ -242,6 +309,9 @@ def build_router(
         }
         verdict = status_map.get(result.status, "INCONCLUSIVE")
         if not result.raw_evidence:
+            failure_response = await mark_failed()
+            if failure_response is not None:
+                return failure_response
             return JSONResponse(
                 status_code=status.HTTP_502_BAD_GATEWAY,
                 content={
@@ -276,6 +346,9 @@ def build_router(
                 )
                 records.append(await ledger.append(record))
         except (DuplicateEvidence, IntegrityViolation, LedgerUnavailable) as exc:
+            failure_response = await mark_failed()
+            if failure_response is not None:
+                return failure_response
             return _ledger_error(exc)
         reason = result.details.get("reason")
         reason_code = reason if isinstance(reason, str) and reason else result.status
@@ -298,8 +371,11 @@ def build_router(
         try:
             stored_verdict = await ledger.append_verdict(verdict_record)
         except (DuplicateVerdict, IntegrityViolation, LedgerUnavailable) as exc:
+            failure_response = await mark_failed()
+            if failure_response is not None:
+                return failure_response
             return _ledger_error(exc)
-        return {
+        response_payload: dict[str, Any] = {
             "claim_id": claim_id,
             "verdict_id": stored_verdict.verdict_id,
             "verdict": stored_verdict.status,
@@ -309,6 +385,16 @@ def build_router(
             "evidence_count": len(records),
             "details": result.details,
         }
+        try:
+            await ledger.complete_idempotency(
+                key_hash=key_hash,
+                request_digest=request_digest,
+                verdict_id=stored_verdict.verdict_id,
+                response_payload=response_payload,
+            )
+        except (IntegrityViolation, LedgerUnavailable) as exc:
+            return _ledger_error(exc)
+        return response_payload
 
     @router.get("/verdicts/{verdict_id}", response_model=None)
     async def read_verdict(
