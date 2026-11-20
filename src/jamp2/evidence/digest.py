@@ -6,7 +6,7 @@ import base64
 import hashlib
 
 from jamp2.evidence.canonicalize import canonicalize
-from jamp2.evidence.model import EvidenceRecord
+from jamp2.evidence.model import EvidenceRecord, JSONValue
 from jamp2.evidence.verdict import VerdictRecord
 
 
@@ -35,7 +35,7 @@ def compute_record_hash(record: EvidenceRecord) -> str:
 
 def compute_verdict_hash(record: VerdictRecord) -> str:
     """Hash every immutable verdict field and its preceding verdict-chain hash."""
-    payload = {
+    payload: JSONValue = {
         "verdict_id": record.verdict_id,
         "claim_id": record.claim_id,
         "status": record.status,
