@@ -205,15 +205,18 @@ class PostgresLedger:
                     text("SELECT pg_advisory_xact_lock(:lock_key)"),
                     {"lock_key": _VERDICT_LOCK_KEY},
                 )
-                evidence_result = await connection.execute(
-                    select(EvidenceRow.__table__).where(
-                        EvidenceRow.evidence_id.in_(record.evidence_ids)
-                    )
+                all_evidence_result = await connection.execute(
+                    select(EvidenceRow.__table__).order_by(EvidenceRow.sequence_id.asc())
                 )
-                evidence_rows = [
-                    EvidenceRow(**dict(row)) for row in evidence_result.mappings().all()
+                all_evidence_rows = [
+                    EvidenceRow(**dict(row)) for row in all_evidence_result.mappings().all()
                 ]
-                evidence_by_id = {row.evidence_id: row for row in evidence_rows}
+                self._verify_rows(all_evidence_rows)
+                evidence_by_id = {
+                    row.evidence_id: row for row in all_evidence_rows
+                    if row.evidence_id in record.evidence_ids
+                }
+                evidence_rows = list(evidence_by_id.values())
                 if set(evidence_by_id) != set(record.evidence_ids) or any(
                     row.claim_id != record.claim_id for row in evidence_rows
                 ):
