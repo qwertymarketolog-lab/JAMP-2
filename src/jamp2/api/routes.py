@@ -156,7 +156,7 @@ def build_router(
     immutable_code_version = (
         code_version or os.getenv("JAMP2_CODE_VERSION") or os.getenv("GITHUB_SHA")
     )
-    provider_map = (
+    provider_map: dict[str, Provider] = (
         providers
         if providers is not None
         else {"moex": MoexProvider(), "coingecko": CoinGeckoProvider()}
