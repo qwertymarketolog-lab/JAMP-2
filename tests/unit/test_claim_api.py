@@ -264,7 +264,7 @@ class DeterministicSourceProvider:
             raise TimeoutError("deterministic provider timeout")
         if self.failure == "error":
             raise RuntimeError("deterministic provider error")
-        raw = f'{{"price":{self.value}}}'.encode("utf-8")
+        raw = f'{{"price":{self.value}}}'.encode()
         return ProviderResult(
             "E4_VERIFIED",
             {"observed_last": self.value},
@@ -384,7 +384,9 @@ def test_multi_source_partial_timeout_is_ambiguous_and_timeout_is_ledgered() -> 
         assert response.status_code == 201
         assert response.json()["verdict"] == "AMBIGUOUS"
         assert len(ledger.records) == 2
-        failure = next(record for record in ledger.records if record.verdict_status == "SOURCE_FAILURE")
+        failure = next(
+            record for record in ledger.records if record.verdict_status == "SOURCE_FAILURE"
+        )
         assert failure.provider == "source-b"
         assert failure.http_status is None
         assert failure.body_complete is False
