@@ -165,7 +165,7 @@ async def arbitrate(
         policy_id=policy.policy_id,
         version=1,
         asset_class=claim.subject_kind,
-        required_identifiers=("subject_identifier",),
+        required_identifiers=(claim.subject_identifier,),
         market_calendar_required=claim.subject_kind == "equity_security",
         quote_currency=claim.unit,
         price_type="LAST_DEAL" if claim.subject_kind == "equity_security" else "SPOT",
