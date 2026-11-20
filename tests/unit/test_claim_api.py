@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import hashlib
+import time
 from typing import Any
 
 import httpx
@@ -12,6 +13,7 @@ import httpx
 from jamp2.api.app import create_app
 from jamp2.domain.claim import NormalizedClaim
 from jamp2.evidence.model import EvidenceRecord
+from jamp2.evidence.multisource import MultiSourcePolicy, SourceSpec
 from jamp2.evidence.verdict import VerdictRecord
 from jamp2.providers.base import ProviderResult
 
@@ -231,5 +233,198 @@ def test_missing_idempotency_key_is_rejected_before_provider_fetch() -> None:
         assert provider.calls == 0
         assert ledger.records == []
         assert ledger.idempotency == {}
+
+    asyncio.run(run())
+
+
+class DeterministicSourceProvider:
+    """Test-only provider with explicit value, timeout, and exception scenarios."""
+
+    def __init__(
+        self,
+        source_id: str,
+        host: str,
+        *,
+        value: int | None = 300,
+        failure: str | None = None,
+        delay_seconds: float = 0,
+    ) -> None:
+        self.source_id = source_id
+        self.host = host
+        self.value = value
+        self.failure = failure
+        self.delay_seconds = delay_seconds
+        self.calls = 0
+
+    def verify_claim(self, claim: NormalizedClaim) -> ProviderResult:
+        self.calls += 1
+        if self.delay_seconds:
+            time.sleep(self.delay_seconds)
+        if self.failure == "timeout":
+            raise TimeoutError("deterministic provider timeout")
+        if self.failure == "error":
+            raise RuntimeError("deterministic provider error")
+        raw = f'{{"price":{self.value}}}'.encode("utf-8")
+        return ProviderResult(
+            "E4_VERIFIED",
+            {"observed_last": self.value},
+            [
+                {
+                    "source": self.source_id,
+                    "url": f"https://{self.host}/price",
+                    "status_code": 200,
+                    "body_complete": True,
+                    "raw_body_base64": base64.b64encode(raw).decode("ascii"),
+                    "sha256_body": hashlib.sha256(raw).hexdigest(),
+                }
+            ],
+        )
+
+
+def _two_source_policy(timeout_seconds: float = 0.2) -> MultiSourcePolicy:
+    return MultiSourcePolicy(
+        policy_id="jamp2.test-two-source",
+        version="test-exact-v1",
+        required_sources=(
+            SourceSpec("source_a", "source-a", "source-a.example", "test-adapter-v1"),
+            SourceSpec("source_b", "source-b", "source-b.example", "test-adapter-v1"),
+        ),
+        timeout_seconds=timeout_seconds,
+    )
+
+
+def test_multi_source_agreement_creates_verified_verdict_and_two_ledger_records() -> None:
+    async def run() -> None:
+        ledger = MemoryLedger()
+        source_a = DeterministicSourceProvider("source-a", "source-a.example", value=300)
+        source_b = DeterministicSourceProvider("source-b", "source-b.example", value=300)
+        app = create_app(
+            ledger,
+            api_key="correct-key",
+            providers={"source_a": source_a, "source_b": source_b},
+            code_version="test-code",
+            policies={("equity_security", "RUB"): _two_source_policy()},
+        )
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app),
+            base_url="http://test",
+            headers={
+                "X-API-Key": "correct-key",
+                "Idempotency-Key": "multi-source-agreement",
+            },
+        ) as client:
+            response = await client.post("/v1/claims/verify", json=request_payload())
+        assert response.status_code == 201
+        assert response.json()["verdict"] == "VERIFIED"
+        assert response.json()["evidence_count"] == 2
+        assert len(ledger.records) == 2
+        assert len(ledger.verdicts) == 1
+        assert ledger.verdicts[0].policy_version == "test-exact-v1"
+        assert source_a.calls == source_b.calls == 1
+
+    asyncio.run(run())
+
+
+def test_multi_source_divergence_is_ambiguous_and_preserves_both_observations() -> None:
+    async def run() -> None:
+        ledger = MemoryLedger()
+        providers = {
+            "source_a": DeterministicSourceProvider("source-a", "source-a.example", value=300),
+            "source_b": DeterministicSourceProvider("source-b", "source-b.example", value=302),
+        }
+        app = create_app(
+            ledger,
+            api_key="correct-key",
+            providers=providers,
+            code_version="test-code",
+            policies={("equity_security", "RUB"): _two_source_policy()},
+        )
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app),
+            base_url="http://test",
+            headers={
+                "X-API-Key": "correct-key",
+                "Idempotency-Key": "multi-source-divergence",
+            },
+        ) as client:
+            response = await client.post("/v1/claims/verify", json=request_payload())
+        assert response.status_code == 201
+        assert response.json()["verdict"] == "AMBIGUOUS"
+        assert len(ledger.records) == 2
+        assert ledger.verdicts[0].reason_codes == ("SOURCE_VALUES_DIVERGE",)
+
+    asyncio.run(run())
+
+
+def test_multi_source_partial_timeout_is_ambiguous_and_timeout_is_ledgered() -> None:
+    async def run() -> None:
+        ledger = MemoryLedger()
+        providers = {
+            "source_a": DeterministicSourceProvider("source-a", "source-a.example", value=300),
+            "source_b": DeterministicSourceProvider(
+                "source-b", "source-b.example", failure="timeout", delay_seconds=0.05
+            ),
+        }
+        app = create_app(
+            ledger,
+            api_key="correct-key",
+            providers=providers,
+            code_version="test-code",
+            policies={("equity_security", "RUB"): _two_source_policy(0.01)},
+        )
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app),
+            base_url="http://test",
+            headers={
+                "X-API-Key": "correct-key",
+                "Idempotency-Key": "multi-source-partial-timeout",
+            },
+        ) as client:
+            response = await client.post("/v1/claims/verify", json=request_payload())
+        assert response.status_code == 201
+        assert response.json()["verdict"] == "AMBIGUOUS"
+        assert len(ledger.records) == 2
+        failure = next(record for record in ledger.records if record.verdict_status == "SOURCE_FAILURE")
+        assert failure.provider == "source-b"
+        assert failure.http_status is None
+        assert failure.body_complete is False
+        assert failure.parsed_value["source_status"] == "TIMEOUT"
+        assert ledger.verdicts[0].reason_codes[0] == "REQUIRED_SOURCE_QUORUM_INCOMPLETE"
+
+    asyncio.run(run())
+
+
+def test_multi_source_full_failure_is_inconclusive_and_both_failures_are_ledgered() -> None:
+    async def run() -> None:
+        ledger = MemoryLedger()
+        providers = {
+            "source_a": DeterministicSourceProvider(
+                "source-a", "source-a.example", failure="error"
+            ),
+            "source_b": DeterministicSourceProvider(
+                "source-b", "source-b.example", failure="error"
+            ),
+        }
+        app = create_app(
+            ledger,
+            api_key="correct-key",
+            providers=providers,
+            code_version="test-code",
+            policies={("equity_security", "RUB"): _two_source_policy()},
+        )
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app),
+            base_url="http://test",
+            headers={
+                "X-API-Key": "correct-key",
+                "Idempotency-Key": "multi-source-full-failure",
+            },
+        ) as client:
+            response = await client.post("/v1/claims/verify", json=request_payload())
+        assert response.status_code == 201
+        assert response.json()["verdict"] == "INCONCLUSIVE"
+        assert len(ledger.records) == 2
+        assert all(record.verdict_status == "SOURCE_FAILURE" for record in ledger.records)
+        assert ledger.verdicts[0].reason_codes[0] == "ALL_REQUIRED_SOURCES_UNAVAILABLE"
 
     asyncio.run(run())
