@@ -51,6 +51,9 @@ class MemoryLedger:
             None,
         )
 
+    async def list_by_claim(self, claim_id: str) -> list[EvidenceRecord]:
+        return [record for record in self.records if record.claim_id == claim_id]
+
 
 class StubProvider:
     def __init__(self, *, valid_digest: bool = True, url: str = "https://iss.moex.com/iss/x"):
