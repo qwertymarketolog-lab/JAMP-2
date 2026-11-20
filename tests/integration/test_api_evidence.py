@@ -35,7 +35,8 @@ class StubProvider:
         self.calls += 1
         assert claim.predicate == "price"
         assert claim.subject_identifier == "SBER"
-        raw = b'{"marketdata":{"LAST":300}}'
+        raw = b'{"marketdata":{"columns":["SECID","LAST"],"data":[["SBER",300]]}}'
+        catalog_raw = b'{"securities":{"columns":["secid"],"data":[["SBER"]]}}'
         return ProviderResult(
             "E4_VERIFIED",
             {"observed_last": 300.0, "trade_date": "2026-11-19"},
@@ -47,7 +48,15 @@ class StubProvider:
                     "body_complete": True,
                     "raw_body_base64": base64.b64encode(raw).decode("ascii"),
                     "sha256_body": compute_sha256(raw),
-                }
+                },
+                {
+                    "source": "moex.iss",
+                    "url": "https://iss.moex.com/iss/securities.json",
+                    "status_code": 200,
+                    "body_complete": True,
+                    "raw_body_base64": base64.b64encode(catalog_raw).decode("ascii"),
+                    "sha256_body": compute_sha256(catalog_raw),
+                },
             ],
         )
 
@@ -89,7 +98,7 @@ def test_api_server_verifies_claim_persists_raw_evidence_and_reads_it() -> None:
             body = created.json()
             assert body["verdict"] == "VERIFIED"
             assert body["provider"] == "moex.iss"
-            assert body["evidence_count"] == 1
+            assert body["evidence_count"] == 2
             evidence_id = body["evidence_ids"][0]
             verdict_response = await client.get(f"/v1/verdicts/{body['verdict_id']}")
             assert verdict_response.status_code == 200
