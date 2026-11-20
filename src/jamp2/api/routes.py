@@ -396,9 +396,14 @@ def build_router(
             "claim_id": claim_id,
             "verdict_id": stored_verdict.verdict_id,
             "verdict": stored_verdict.status,
-            "provider_status": {
-                outcome.source.provider_id: outcome.status for outcome in arbitration.outcomes
-            },
+            "provider_status": (
+                arbitration.outcomes[0].status
+                if len(arbitration.outcomes) == 1
+                else {
+                    outcome.source.provider_id: outcome.status
+                    for outcome in arbitration.outcomes
+                }
+            ),
             "provider": (
                 arbitration.outcomes[0].source.provider_id
                 if len(arbitration.outcomes) == 1
@@ -406,6 +411,14 @@ def build_router(
             ),
             "evidence_ids": [record.evidence_id for record in records],
             "evidence_count": len(records),
+            "details": (
+                arbitration.outcomes[0].details
+                if len(arbitration.outcomes) == 1
+                else {
+                    outcome.source.provider_id: outcome.details
+                    for outcome in arbitration.outcomes
+                }
+            ),
             "arbitration": {
                 "verdict": arbitration.verdict_status,
                 "reason_codes": list(arbitration.reason_codes),
