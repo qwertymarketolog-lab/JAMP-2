@@ -178,7 +178,6 @@ async def arbitrate(
     for outcome in outcomes:
         if not outcome.observation.usable:
             reason = outcome.details.get("reason")
-            reasons.append(
-                f"{outcome.source.provider_id}:{reason if isinstance(reason, str) else outcome.status}"
-            )
+            reason_text = reason if isinstance(reason, str) else outcome.status
+            reasons.append(f"{outcome.source.provider_id}:{reason_text}")
     return ArbitrationResult(verdict, reducer, outcomes, tuple(reasons))
