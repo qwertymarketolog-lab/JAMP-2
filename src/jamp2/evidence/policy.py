@@ -156,7 +156,7 @@ class SourceObservationInput:
 
     provider_id: str
     provider_observed_at: str | datetime | None
-    fetched_at: datetime
+    fetched_at: datetime | None
     body_complete: bool
     request_succeeded: bool
     identifiers: tuple[str, ...]
@@ -204,15 +204,18 @@ def evaluate_source_policy(
                 SourceEligibility(provider_id, "FAILED", None, current, "SOURCE_FAILED")
             )
             continue
-        fetched_at = _utc(item.fetched_at, "fetched_at")
+        try:
+            fetched_at = _utc(item.fetched_at, "fetched_at") if item.fetched_at else None
+        except ValueError:
+            fetched_at = None
         observed_at = _parse_provider_time(item.provider_observed_at)
-        if not item.body_complete or observed_at is None:
+        if not item.body_complete or observed_at is None or fetched_at is None:
             eligibility.append(
                 SourceEligibility(
                     provider_id,
                     "INCOMPLETE",
                     observed_at,
-                    fetched_at,
+                    fetched_at or current,
                     "SOURCE_TIMESTAMP_OR_BODY_INCOMPLETE",
                 )
             )
