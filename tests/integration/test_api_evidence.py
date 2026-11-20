@@ -41,13 +41,21 @@ class StubProvider:
         catalog_raw = b'{"securities":{"columns":["secid"],"data":[["SBER"]]}}'
         return ProviderResult(
             "E4_VERIFIED",
-            {"observed_last": 300.0, "trade_date": "2026-11-19"},
+            {
+                "observed_last": 300.0,
+                "trade_date": "2026-11-19",
+                "source_identifiers": [claim.subject_identifier],
+                "quote_currency": claim.unit,
+                "price_type": "LAST_DEAL",
+            },
             [
                 {
                     "source": "moex.iss",
                     "url": "https://iss.moex.com/iss/marketdata.json",
                     "status_code": 200,
                     "body_complete": True,
+                    "provider_observed_at": datetime.now(UTC).isoformat(),
+                    "fetched_at": datetime.now(UTC).isoformat(),
                     "raw_body_base64": base64.b64encode(raw).decode("ascii"),
                     "sha256_body": compute_sha256(raw),
                 },
@@ -56,6 +64,8 @@ class StubProvider:
                     "url": "https://iss.moex.com/iss/securities.json",
                     "status_code": 200,
                     "body_complete": True,
+                    "provider_observed_at": datetime.now(UTC).isoformat(),
+                    "fetched_at": datetime.now(UTC).isoformat(),
                     "raw_body_base64": base64.b64encode(catalog_raw).decode("ascii"),
                     "sha256_body": compute_sha256(catalog_raw),
                 },
@@ -142,7 +152,7 @@ def test_api_server_verifies_claim_persists_raw_evidence_and_reads_it() -> None:
             assert b'"LAST"' in raw
             assert evidence["raw_sha256"] == compute_sha256(raw)
             assert evidence["canonicalization_version"] == "jamp-json-nfc-v1"
-            assert evidence["source_timestamp"] == "2026-11-19"
+            assert evidence["source_timestamp"] is None
             assert evidence["body_complete"] is True
             assert evidence["provider_adapter_version"] == "moex-iss-adapter-v1"
             assert evidence["parser_version"] == "jamp-provider-json-v1"
