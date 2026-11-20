@@ -10,11 +10,12 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import httpx
+import pytest
 
 from jamp2.api.app import create_app
 from jamp2.domain.claim import NormalizedClaim
 from jamp2.evidence.model import EvidenceRecord
-from jamp2.evidence.multisource import MultiSourcePolicy, SourceSpec
+from jamp2.evidence.multisource import MultiSourcePolicy, SourceSpec, arbitrate
 from jamp2.evidence.policy import SourcePolicyRecord, SourceProvenance
 from jamp2.evidence.verdict import VerdictRecord
 from jamp2.providers.base import ProviderResult
@@ -474,3 +475,54 @@ def test_multi_source_full_failure_is_inconclusive_and_both_failures_are_ledgere
         assert ledger.verdicts[0].reason_codes[0] == "ALL_REQUIRED_SOURCES_UNAVAILABLE"
 
     asyncio.run(run())
+
+
+def test_missing_provider_observation_time_blocks_conflict_reducer(monkeypatch: Any) -> None:
+    class TimestampMissingProvider:
+        def verify_claim(self, claim: NormalizedClaim) -> ProviderResult:
+            now = datetime.now(UTC)
+            raw = b'{"price":300}'
+            return ProviderResult(
+                "E4_VERIFIED",
+                {
+                    "observed_last": 300.0,
+                    "source_identifiers": [claim.subject_identifier],
+                    "quote_currency": claim.unit,
+                    "price_type": "LAST_DEAL",
+                },
+                [
+                    {
+                        "source": "moex.iss",
+                        "url": "https://iss.moex.com/iss/price",
+                        "status_code": 200,
+                        "body_complete": True,
+                        "provider_observed_at": None,
+                        "fetched_at": now.isoformat(),
+                        "raw_body_base64": base64.b64encode(raw).decode("ascii"),
+                        "sha256_body": hashlib.sha256(raw).hexdigest(),
+                    }
+                ],
+            )
+
+    def reducer_must_not_run(_observations: object) -> dict[str, object]:
+        pytest.fail("conflict reducer must not receive an observation rejected by policy")
+
+    monkeypatch.setattr("jamp2.evidence.multisource.detect_conflicts", reducer_must_not_run)
+    claim = NormalizedClaim(
+        "SBER share price is 300 RUB",
+        "equity_security",
+        "SBER",
+        "price",
+        300,
+        "RUB",
+    )
+    policy = MultiSourcePolicy(
+        "jamp2.single-source-missing-time",
+        "single-source-test-v1",
+        (SourceSpec("moex", "moex.iss", "iss.moex.com", "test-adapter-v1"),),
+    )
+    result = asyncio.run(arbitrate(claim, policy, {"moex": TimestampMissingProvider()}))
+    assert result.verdict_status == "AMBIGUOUS"
+    assert result.reducer["status"] == "POLICY_GATE_BLOCKED"
+    assert result.outcomes[0].details["observation_status"] == "INCOMPLETE"
+    assert "ERR_QUORUM_NOT_MET" in result.reason_codes
