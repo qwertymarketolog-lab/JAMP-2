@@ -29,6 +29,7 @@ def compute_record_hash(record: EvidenceRecord) -> str:
         "parsed_value": record.parsed_value,
         "verdict_status": record.verdict_status,
         "parent_hash": record.parent_hash,
+        "canonicalization_version": record.canonicalization_version,
     }
     return compute_sha256(canonicalize(payload))
 
