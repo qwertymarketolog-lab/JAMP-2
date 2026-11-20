@@ -20,6 +20,7 @@ from jamp2.domain.claim import NormalizedClaim
 from jamp2.evidence.canonicalize import CANONICALIZATION_VERSION, canonicalize
 from jamp2.evidence.digest import compute_record_hash, compute_sha256
 from jamp2.evidence.model import EvidenceRecord, JSONValue
+from jamp2.evidence.multisource import MultiSourcePolicy, SourceSpec, arbitrate
 from jamp2.evidence.replay import replay_verdict
 from jamp2.evidence.verdict import VerdictRecord
 from jamp2.ledger.postgres import (
@@ -28,7 +29,7 @@ from jamp2.ledger.postgres import (
     IntegrityViolation,
     LedgerUnavailable,
 )
-from jamp2.providers.base import Provider, ProviderResult
+from jamp2.providers.base import Provider
 from jamp2.providers.coingecko import CoinGeckoProvider
 from jamp2.providers.moex import MoexProvider
 
@@ -174,6 +175,7 @@ def build_router(
     api_key: str | None,
     providers: dict[str, Provider] | None = None,
     code_version: str | None = None,
+    policies: dict[tuple[str, str], MultiSourcePolicy] | None = None,
 ) -> APIRouter:
     """Bind authenticated claim verification to a ledger and fixed provider adapters."""
     configured_key = api_key if api_key is not None else os.getenv("JAMP2_API_KEY")
@@ -185,6 +187,18 @@ def build_router(
         if providers is not None
         else {"moex": MoexProvider(), "coingecko": CoinGeckoProvider()}
     )
+    policy_map = policies or {
+        ("equity_security", "RUB"): MultiSourcePolicy(
+            "jamp2.provider-price-comparison",
+            "provider-defaults-v1",
+            (SourceSpec("moex", "moex.iss", "iss.moex.com", "moex-iss-adapter-v1"),),
+        ),
+        ("crypto_asset", "USD"): MultiSourcePolicy(
+            "jamp2.provider-price-comparison",
+            "provider-defaults-v1",
+            (SourceSpec("coingecko", "coingecko", "api.coingecko.com", "coingecko-adapter-v1"),),
+        ),
+    }
     router = APIRouter(prefix="/v1", tags=["trust-layer"])
 
     async def require_api_key(
@@ -209,23 +223,16 @@ def build_router(
         _: None = Depends(require_api_key),
         idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
     ) -> dict[str, object] | JSONResponse:
-        configuration = _provider_configuration(payload.subject.kind, payload.unit)
-        if configuration is None:
+        policy = policy_map.get((payload.subject.kind, payload.unit))
+        if policy is None:
             return JSONResponse(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                 content={"error": "UNSUPPORTED_SUBJECT_UNIT_COMBINATION"},
             )
-        provider_key, provider_id, allowed_host, adapter_version = configuration
         if not immutable_code_version:
             return JSONResponse(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                 content={"error": "CODE_VERSION_NOT_CONFIGURED"},
-            )
-        provider = provider_map.get(provider_key)
-        if provider is None:
-            return JSONResponse(
-                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                content={"error": "PROVIDER_NOT_CONFIGURED"},
             )
         if not isinstance(idempotency_key, str) or not 8 <= len(idempotency_key) <= 128:
             return JSONResponse(
@@ -292,33 +299,16 @@ def build_router(
             unit=payload.unit,
         )
         try:
-            result: ProviderResult = await run_in_threadpool(provider.verify_claim, claim)
+            arbitration = await arbitrate(claim, policy, provider_map)
         except Exception:
             failure_response = await mark_failed()
             if failure_response is not None:
                 return failure_response
             return JSONResponse(
                 status_code=status.HTTP_502_BAD_GATEWAY,
-                content={"error": "PROVIDER_VERIFICATION_FAILED"},
+                content={"error": "SOURCE_ARBITRATION_FAILED"},
             )
-        status_map = {
-            "E4_VERIFIED": "VERIFIED",
-            "E4_CONTRADICTED": "CONTRADICTED",
-            "E4_OUT_OF_SCOPE": "OUT_OF_SCOPE",
-            "E4_INCONCLUSIVE": "INCONCLUSIVE",
-        }
-        verdict = status_map.get(result.status, "INCONCLUSIVE")
-        if not result.raw_evidence:
-            failure_response = await mark_failed()
-            if failure_response is not None:
-                return failure_response
-            return JSONResponse(
-                status_code=status.HTTP_502_BAD_GATEWAY,
-                content={
-                    "error": "SOURCE_EVIDENCE_NOT_CAPTURED",
-                    "provider_status": result.status,
-                },
-            )
+
         claim_snapshot: dict[str, Any] = {
             "text": claim.text,
             "subject_kind": claim.subject_kind,
@@ -327,45 +317,72 @@ def build_router(
             "expected_value": claim.expected_value,
             "unit": claim.unit,
         }
-        evidence_payload: dict[str, Any] = {
-            "claim": claim_snapshot,
-            "provider_result": result.details,
-            "trade_date": result.details.get("trade_date"),
-        }
         records: list[EvidenceRecord] = []
         try:
-            for observation in result.raw_evidence:
-                record = _evidence_record(
-                    claim_id=claim_id,
-                    provider_id=provider_id,
-                    allowed_host=allowed_host,
-                    adapter_version=adapter_version,
-                    observation=observation,
-                    parsed_value=evidence_payload,
-                    verdict_status="OBSERVATION_CAPTURED",
-                )
-                records.append(await ledger.append(record))
+            for outcome in arbitration.outcomes:
+                source_payload: dict[str, Any] = {
+                    "claim": claim_snapshot,
+                    "source_status": outcome.status,
+                    "source_details": outcome.details,
+                    "trade_date": outcome.details.get("trade_date"),
+                }
+                if outcome.raw_evidence:
+                    for observation in outcome.raw_evidence:
+                        record = _evidence_record(
+                            claim_id=claim_id,
+                            provider_id=outcome.source.provider_id,
+                            allowed_host=outcome.source.allowed_host,
+                            adapter_version=outcome.source.adapter_version,
+                            observation=observation,
+                            parsed_value=source_payload,
+                            verdict_status=(
+                                "SOURCE_OBSERVATION_CAPTURED"
+                                if outcome.observation.usable
+                                else "SOURCE_RESPONSE_CAPTURED"
+                            ),
+                        )
+                        records.append(await ledger.append(record))
+                else:
+                    # A failed/no-response attempt is still a durable ledger observation.
+                    empty_body = b""
+                    record = EvidenceRecord(
+                        evidence_id=str(uuid.uuid4()),
+                        claim_id=claim_id,
+                        provider=outcome.source.provider_id,
+                        url=f"https://{outcome.source.allowed_host}/",
+                        http_status=None,
+                        raw_body_bytes=empty_body,
+                        raw_sha256=compute_sha256(empty_body),
+                        captured_at_utc=datetime.now(UTC),
+                        parsed_value=source_payload,
+                        verdict_status="SOURCE_FAILURE",
+                        parent_hash=None,
+                        body_complete=False,
+                        provider_adapter_version=outcome.source.adapter_version,
+                        parser_version="jamp-provider-json-v1",
+                    )
+                    records.append(await ledger.append(record))
         except (DuplicateEvidence, IntegrityViolation, LedgerUnavailable) as exc:
             failure_response = await mark_failed()
             if failure_response is not None:
                 return failure_response
             return _ledger_error(exc)
-        reason = result.details.get("reason")
-        reason_code = reason if isinstance(reason, str) and reason else result.status
+
         verdict_record = VerdictRecord(
             verdict_id=str(uuid.uuid4()),
             claim_id=claim_id,
-            status=verdict,
+            status=arbitration.verdict_status,
             evidence_ids=tuple(record.evidence_id for record in records),
-            policy_id="jamp2.provider-price-comparison",
-            policy_version="provider-defaults-v1",
+            policy_id=policy.policy_id,
+            policy_version=policy.version,
             code_version=immutable_code_version,
             canonicalization_version=CANONICALIZATION_VERSION,
             decided_at_utc=datetime.now(UTC),
-            reason_codes=(reason_code,),
+            reason_codes=arbitration.reason_codes,
             explanation=(
-                f"{provider_id} provider comparison returned {result.status}; "
-                "see linked raw evidence and version metadata"
+                f"Required-source arbitration returned {arbitration.verdict_status}; "
+                f"{len(arbitration.outcomes)} required source outcome(s) are linked "
+                "to the immutable evidence ledger."
             ),
         )
         try:
@@ -379,11 +396,24 @@ def build_router(
             "claim_id": claim_id,
             "verdict_id": stored_verdict.verdict_id,
             "verdict": stored_verdict.status,
-            "provider_status": result.status,
-            "provider": provider_id,
+            "provider_status": {
+                outcome.source.provider_id: outcome.status for outcome in arbitration.outcomes
+            },
+            "provider": (
+                arbitration.outcomes[0].source.provider_id
+                if len(arbitration.outcomes) == 1
+                else [outcome.source.provider_id for outcome in arbitration.outcomes]
+            ),
             "evidence_ids": [record.evidence_id for record in records],
             "evidence_count": len(records),
-            "details": result.details,
+            "arbitration": {
+                "verdict": arbitration.verdict_status,
+                "reason_codes": list(arbitration.reason_codes),
+                "reducer": arbitration.reducer,
+                "required_sources": [
+                    outcome.source.provider_id for outcome in arbitration.outcomes
+                ],
+            },
         }
         try:
             await ledger.complete_idempotency(
