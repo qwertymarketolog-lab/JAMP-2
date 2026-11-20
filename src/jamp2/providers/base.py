@@ -4,7 +4,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Protocol
 
-from jamp2.domain.claim import Claim
+from jamp2.domain.claim import NormalizedClaim
 
 
 @dataclass(frozen=True)
@@ -25,4 +25,4 @@ class ProviderResult:
 
 
 class Provider(Protocol):
-    def verify_claim(self, claim: Claim) -> ProviderResult: ...
+    def verify_claim(self, claim: NormalizedClaim) -> ProviderResult: ...
