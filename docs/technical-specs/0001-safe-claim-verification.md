@@ -219,4 +219,4 @@ The reworked PR is ready for review only when:
 - CI terminal evidence proves Ruff, Mypy, and a non-zero Pytest suite; artifacts are inspectable;
 - PR #3 remains unmerged until a separate owner decision after review.
 
-**Owner authorization boundary:** This specification authorizes preparation and review of the technical contract only. Implementation commits, PR #3 updates, and merge remain separate execution steps. The broad project authorization does not waive CI evidence or the no-merge rule.
+**Owner authorization boundary:** The project owner explicitly authorized adding, changing, and running project work on 2026-11-20. Implementation within the existing PR #3 branch and this approved scope is authorized. Do not merge PR #3, deploy, expose the API publicly, or change JAMP 1 without a separate explicit decision. CI evidence remains mandatory.
