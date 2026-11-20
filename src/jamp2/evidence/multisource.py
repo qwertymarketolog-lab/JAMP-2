@@ -84,7 +84,7 @@ def _numeric_value(details: dict[str, Any]) -> int | float | str | None:
         number = float(value)
     except (TypeError, ValueError):
         return None
-    return value if math.isfinite(number) else None
+    return value if math.isfinite(number) and number > 0 else None
 
 
 async def _fetch_one(
