@@ -75,6 +75,7 @@ class EvidenceRow(Base):
     # Deprecated compatibility field; the separate VerdictRow is authoritative.
     verdict_status: Mapped[str] = mapped_column(String(64))
     parent_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    canonicalization_version: Mapped[str] = mapped_column(String(64))
     record_hash: Mapped[str] = mapped_column(String(64))
 
 
@@ -116,6 +117,7 @@ def _to_record(row: EvidenceRow) -> EvidenceRecord:
         parsed_value=row.parsed_value,
         verdict_status=row.verdict_status,
         parent_hash=row.parent_hash,
+        canonicalization_version=row.canonicalization_version,
     )
 
 
@@ -188,6 +190,7 @@ class PostgresLedger:
                         parsed_value=linked_record.parsed_value,
                         verdict_status=linked_record.verdict_status,
                         parent_hash=linked_record.parent_hash,
+                        canonicalization_version=linked_record.canonicalization_version,
                         record_hash=record_hash,
                     )
                 )
