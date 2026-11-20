@@ -50,4 +50,11 @@ jobs:
       - name: Mypy
         run: mypy src/jamp2
       - name: Pytest (unit and real PostgreSQL integration)
-        run: python -m pytest -q
+        run: python -m pytest -q --junitxml=pytest-results.xml
+      - name: Upload pytest report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: jamp2-pytest-${{ github.run_id }}
+          path: pytest-results.xml
+          if-no-files-found: warn
