@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import os
 from collections.abc import Sequence
-from typing import Any
 from dataclasses import replace
+from typing import Any
 from datetime import UTC, datetime
 
 from sqlalchemy import (
@@ -119,7 +119,9 @@ class IdempotencyRow(Base):
     response_payload: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
     verdict_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
     created_at_utc: Mapped[datetime] = mapped_column(DateTime(timezone=True))
-    completed_at_utc: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    completed_at_utc: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
 
 
 _LOCK_KEY = 731_942_001
