@@ -133,3 +133,9 @@ def test_different_raw_bytes_have_different_digests_and_record_hashes() -> None:
 
     assert compute_sha256(first.raw_body_bytes) != compute_sha256(changed.raw_body_bytes)
     assert compute_record_hash(first) != compute_record_hash(changed)
+
+
+def test_evidence_record_hash_binds_canonicalization_version() -> None:
+    record = make_record("versioned-evidence")
+    changed_version = replace(record, canonicalization_version="future-json-v2")
+    assert compute_record_hash(record) != compute_record_hash(changed_version)
