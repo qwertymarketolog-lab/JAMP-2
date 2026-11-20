@@ -114,13 +114,12 @@ class PostgresLedger:
                     text("SELECT pg_advisory_xact_lock(:lock_key)"),
                     {"lock_key": _LOCK_KEY},
                 )
-                rows = (
-                    await connection.execute(
-                        select(EvidenceRow)
-                        .order_by(EvidenceRow.sequence_id.asc())
-                        .with_for_update()
-                    )
-                ).scalars().all()
+                result = await connection.execute(
+                    select(EvidenceRow.__table__)
+                    .order_by(EvidenceRow.sequence_id.asc())
+                    .with_for_update()
+                )
+                rows = [EvidenceRow(**dict(row)) for row in result.mappings().all()]
                 self._verify_rows(rows)
                 if any(row.evidence_id == record.evidence_id for row in rows):
                     raise DuplicateEvidence(record.evidence_id)
@@ -153,11 +152,10 @@ class PostgresLedger:
         """Return a record only after verifying every link from genesis."""
         try:
             async with self.engine.connect() as connection:
-                rows = (
-                    await connection.execute(
-                        select(EvidenceRow).order_by(EvidenceRow.sequence_id.asc())
-                    )
-                ).scalars().all()
+                result = await connection.execute(
+                    select(EvidenceRow.__table__).order_by(EvidenceRow.sequence_id.asc())
+                )
+                rows = [EvidenceRow(**dict(row)) for row in result.mappings().all()]
             self._verify_rows(rows)
             for row in rows:
                 if row.evidence_id == evidence_id:
