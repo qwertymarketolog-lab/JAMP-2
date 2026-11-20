@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import os
+import time
 from datetime import UTC, datetime
 
 import httpx
@@ -15,6 +16,7 @@ from jamp2.api.app import create_app
 from jamp2.domain.claim import NormalizedClaim
 from jamp2.evidence.digest import compute_sha256
 from jamp2.evidence.model import EvidenceRecord
+from jamp2.evidence.multisource import MultiSourcePolicy, SourceSpec
 from jamp2.ledger.postgres import LedgerUnavailable, PostgresLedger
 from jamp2.providers.base import ProviderResult
 
@@ -214,6 +216,93 @@ def test_api_returns_500_on_integrity_violation() -> None:
             response = await client.get("/v1/evidence/api-tamper")
             assert response.status_code == 500
             assert response.json() == {"error": "INTEGRITY_VIOLATION"}
+        await ledger.close()
+
+    asyncio.run(run())
+
+
+def test_partial_multi_source_timeout_is_ambiguous_in_postgres_ledger() -> None:
+    class FixedProvider:
+        def __init__(self, source: str, host: str, *, timeout: bool = False) -> None:
+            self.source = source
+            self.host = host
+            self.timeout = timeout
+
+        def verify_claim(self, claim: NormalizedClaim) -> ProviderResult:
+            if self.timeout:
+                time.sleep(0.05)
+                raise TimeoutError("deterministic integration timeout")
+            raw = b'{"price":300}'
+            return ProviderResult(
+                "E4_VERIFIED",
+                {"observed_last": 300.0},
+                [
+                    {
+                        "source": self.source,
+                        "url": f"https://{self.host}/price",
+                        "status_code": 200,
+                        "body_complete": True,
+                        "raw_body_base64": base64.b64encode(raw).decode("ascii"),
+                        "sha256_body": compute_sha256(raw),
+                    }
+                ],
+            )
+
+    async def run() -> None:
+        ledger = PostgresLedger(DATABASE_URL)
+        await reset_ledger(ledger)
+        policy = MultiSourcePolicy(
+            "jamp2.integration-two-source",
+            "integration-exact-v1",
+            (
+                SourceSpec("source_a", "source-a", "source-a.example", "test-adapter-v1"),
+                SourceSpec("source_b", "source-b", "source-b.example", "test-adapter-v1"),
+            ),
+            timeout_seconds=0.01,
+        )
+        application = create_app(
+            ledger,
+            api_key="integration-test-key",
+            providers={
+                "source_a": FixedProvider("source-a", "source-a.example"),
+                "source_b": FixedProvider("source-b", "source-b.example", timeout=True),
+            },
+            code_version="integration-test-sha",
+            policies={("equity_security", "RUB"): policy},
+        )
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=application),
+            base_url="http://test",
+            headers={
+                "X-API-Key": "integration-test-key",
+                "Idempotency-Key": "postgres-multisource-timeout-01",
+            },
+        ) as client:
+            created = await client.post("/v1/claims/verify", json=claim_payload())
+            assert created.status_code == 201
+            body = created.json()
+            assert body["verdict"] == "AMBIGUOUS"
+            assert body["evidence_count"] == 2
+
+            evidence_responses = [
+                await client.get(f"/v1/evidence/{evidence_id}")
+                for evidence_id in body["evidence_ids"]
+            ]
+            assert all(response.status_code == 200 for response in evidence_responses)
+            failed = next(
+                response.json()
+                for response in evidence_responses
+                if response.json()["verdict_status"] == "SOURCE_FAILURE"
+            )
+            assert failed["provider"] == "source-b"
+            assert failed["http_status"] is None
+            assert failed["body_complete"] is False
+            assert base64.b64decode(failed["raw_body_base64"], validate=True) == b""
+
+            verdict_response = await client.get(f"/v1/verdicts/{body['verdict_id']}")
+            assert verdict_response.status_code == 200
+            assert verdict_response.json()["status"] == "AMBIGUOUS"
+            assert verdict_response.json()["policy_version"] == "integration-exact-v1"
         await ledger.close()
 
     asyncio.run(run())
