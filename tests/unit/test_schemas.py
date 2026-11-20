@@ -10,7 +10,7 @@ def test_claim_verify_accepts_supported_provider_independent_shape() -> None:
     claim = ClaimVerifyRequest.model_validate(
         {
             "text": "SBER share price is 300 RUB",
-            "subject": {"kind": "moex_security", "identifier": "SBER"},
+            "subject": {"kind": "equity_security", "identifier": "SBER"},
             "predicate": "price",
             "expected_value": 300,
             "unit": "RUB",
@@ -33,7 +33,7 @@ def test_claim_verify_accepts_supported_provider_independent_shape() -> None:
 def test_claim_verify_rejects_client_authored_evidence_fields(extra: dict[str, object]) -> None:
     payload: dict[str, object] = {
         "text": "SBER share price is 300 RUB",
-        "subject": {"kind": "moex_security", "identifier": "SBER"},
+        "subject": {"kind": "equity_security", "identifier": "SBER"},
         "predicate": "price",
         "expected_value": 300,
         "unit": "RUB",
@@ -49,7 +49,7 @@ def test_claim_verify_rejects_non_positive_or_non_finite_price(value: float) -> 
         ClaimVerifyRequest.model_validate(
             {
                 "text": "BTC price",
-                "subject": {"kind": "coingecko_coin", "identifier": "bitcoin"},
+                "subject": {"kind": "crypto_asset", "identifier": "bitcoin"},
                 "predicate": "price",
                 "expected_value": value,
                 "unit": "USD",
