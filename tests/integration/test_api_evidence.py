@@ -73,6 +73,7 @@ def claim_payload() -> dict[str, object]:
 
 async def reset_ledger(ledger: PostgresLedger) -> None:
     async with ledger.engine.begin() as connection:
+        await connection.execute(text("TRUNCATE TABLE idempotency_records"))
         await connection.execute(text("TRUNCATE TABLE verdicts RESTART IDENTITY"))
         await connection.execute(text("TRUNCATE TABLE evidence RESTART IDENTITY"))
 
@@ -91,7 +92,10 @@ def test_api_server_verifies_claim_persists_raw_evidence_and_reads_it() -> None:
         async with httpx.AsyncClient(
             transport=httpx.ASGITransport(app=application),
             base_url="http://test",
-            headers={"X-API-Key": "integration-test-key"},
+            headers={
+                "X-API-Key": "integration-test-key",
+                "Idempotency-Key": "integration-claim-key-0001",
+            },
         ) as client:
             created = await client.post("/v1/claims/verify", json=claim_payload())
             assert created.status_code == 201
@@ -113,6 +117,20 @@ def test_api_server_verifies_claim_persists_raw_evidence_and_reads_it() -> None:
             assert replay.json()["replay_status"] == "VERIFIED"
             assert replay.json()["matches_original"] is True
             assert replay.json()["network_calls"] == 0
+            assert provider.calls == 1
+            duplicate_request = await client.post(
+                "/v1/claims/verify",
+                json=claim_payload(),
+            )
+            assert duplicate_request.status_code == 201
+            assert duplicate_request.json() == body
+            assert provider.calls == 1
+
+            changed_claim = claim_payload()
+            changed_claim["expected_value"] = 301
+            reused_key = await client.post("/v1/claims/verify", json=changed_claim)
+            assert reused_key.status_code == 409
+            assert reused_key.json() == {"error": "IDEMPOTENCY_KEY_REUSED"}
             assert provider.calls == 1
 
             fetched = await client.get(f"/v1/evidence/{evidence_id}")
