@@ -12,7 +12,7 @@ import pytest
 from sqlalchemy import text
 
 from jamp2.api.app import create_app
-from jamp2.domain.claim import Claim
+from jamp2.domain.claim import NormalizedClaim
 from jamp2.evidence.digest import compute_sha256
 from jamp2.evidence.model import EvidenceRecord
 from jamp2.ledger.postgres import LedgerUnavailable, PostgresLedger
@@ -28,9 +28,9 @@ pytestmark = pytest.mark.skipif(
 class StubProvider:
     """Deterministic adapter fixture; HTTP transport is tested separately."""
 
-    def verify_claim(self, claim: Claim) -> ProviderResult:
+    def verify_claim(self, claim: NormalizedClaim) -> ProviderResult:
         assert claim.type == "price"
-        assert claim.ticker == "SBER"
+        assert claim.subject_identifier == "SBER"
         raw = b'{"marketdata":{"LAST":300}}'
         return ProviderResult(
             "E4_VERIFIED",
@@ -51,7 +51,7 @@ class StubProvider:
 def claim_payload() -> dict[str, object]:
     return {
         "text": "SBER share price is 300 RUB",
-        "subject": {"kind": "moex_security", "identifier": "SBER"},
+        "subject": {"kind": "equity_security", "identifier": "SBER"},
         "predicate": "price",
         "expected_value": 300,
         "unit": "RUB",
