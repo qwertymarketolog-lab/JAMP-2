@@ -7,7 +7,7 @@ implementation under test when changing canonicalization behavior.
 from __future__ import annotations
 
 from dataclasses import replace
-from datetime import datetime, UTC
+from datetime import UTC, datetime
 
 from jamp2.evidence.digest import compute_record_hash, compute_sha256, compute_verdict_hash
 from jamp2.evidence.model import EvidenceRecord
