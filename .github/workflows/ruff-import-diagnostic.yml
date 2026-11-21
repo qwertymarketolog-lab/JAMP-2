@@ -1,6 +1,8 @@
 name: Temporary Ruff Import Diagnostic
 
 on:
+  push:
+    branches: [audit/adr-0006-v1-freeze]
   pull_request:
 
 permissions:
