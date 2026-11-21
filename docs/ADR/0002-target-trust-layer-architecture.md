@@ -187,8 +187,8 @@ Product demand remains unvalidated until user interviews or observed pilot usage
 ## 6. Delivery order
 
 1. **Architecture contract approval:** approve this ADR and reconcile any required changes to Charter/Epistemic Contract.
-2. **PR #3 remains HOLD:** do not merge the current client-write evidence API as a public Trust Layer boundary. Resolve the route trust boundary, authentication requirement, canonicalization version, and real PostgreSQL CI evidence under a separately approved implementation scope.
-3. **Persistence contract:** freeze Evidence/Verdict record schemas, canonicalization version, migration compatibility, and replay semantics before production migration.
+2. **Claim verification and persistence:** retain the server-side provider-acquisition boundary implemented in PR #3; continue hardening Evidence/Verdict persistence, canonicalization compatibility, and replay semantics against the limitations recorded in ADR-0003.
+3. **Ledger hardening:** close or explicitly accept the residual risks in ADR-0003, including TRUNCATE protection, PENDING recovery, and multi-source replay.
 4. **First end-to-end vertical slice:** Claim → server-side Provider acquisition → raw Evidence → Verdict Record → Ledger → integrity/replay API.
 5. **Security boundary:** authentication and tenant isolation before any external pilot or multi-user exposure.
 6. **Text extraction adapter:** add separately after explicit-Claim verification is proven; extractor remains untrusted and replaceable.
