@@ -1,0 +1,44 @@
+name: Temporary Ruff Import Diagnostic
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  ruff-import-diagnostic:
+    name: Ruff import autofix diagnostic (temporary)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install project and pinned-by-project quality tools
+        run: python -m pip install -e ".[dev]"
+      - name: Apply Ruff import-only autofix (diagnostic workspace only)
+        id: ruff
+        continue-on-error: true
+        run: |
+          ruff --version
+          ruff check --select I --fix tests/unit/test_v1_golden_hashes.py
+      - name: Capture exact diff and Ruff result
+        if: always()
+        run: |
+          {
+            echo "RUFF_STEP_OUTCOME=${{ steps.ruff.outcome }}"
+            echo
+            git diff -- tests/unit/test_v1_golden_hashes.py
+          } | tee ruff-import-fix.diff
+      - name: Upload diagnostic diff
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ruff-import-diagnostic-${{ github.run_id }}
+          path: ruff-import-fix.diff
+          if-no-files-found: error
