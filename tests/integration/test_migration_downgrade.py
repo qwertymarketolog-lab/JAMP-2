@@ -6,9 +6,9 @@ import asyncio
 import hashlib
 import os
 import uuid
+from collections.abc import Iterator
 from datetime import UTC, datetime
 from pathlib import Path
-from collections.abc import Iterator
 
 import asyncpg
 import pytest
