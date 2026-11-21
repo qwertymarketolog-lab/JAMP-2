@@ -269,7 +269,7 @@ def test_006_truncate_protection_upgrade_and_downgrade(
     config, database_url = migration_database
     command.upgrade(config, "head")
 
-    assert asyncio.run(_current_revision(database_url)) == "006_truncate_protection"
+    assert asyncio.run(_current_revision(database_url)) == "007_pending_lease"
     assert asyncio.run(_trigger_exists(database_url, "evidence", "evidence_no_truncate"))
     assert asyncio.run(_trigger_exists(database_url, "verdicts", "verdicts_no_truncate"))
     assert asyncio.run(_truncate_function_exists(database_url))
@@ -280,3 +280,40 @@ def test_006_truncate_protection_upgrade_and_downgrade(
     assert not asyncio.run(_trigger_exists(database_url, "evidence", "evidence_no_truncate"))
     assert not asyncio.run(_trigger_exists(database_url, "verdicts", "verdicts_no_truncate"))
     assert not asyncio.run(_truncate_function_exists(database_url))
+
+async def _idempotency_columns(database_url: URL) -> set[str]:
+    connection = await asyncpg.connect(
+        **_connect_kwargs(database_url, database_url.database or "")
+    )
+    try:
+        rows = await connection.fetch(
+            """
+            SELECT column_name
+            FROM information_schema.columns
+            WHERE table_schema = 'public'
+              AND table_name = 'idempotency_records'
+            """
+        )
+        return {row["column_name"] for row in rows}
+    finally:
+        await connection.close()
+
+
+def test_downgrade_007_pending_lease(
+    migration_database: tuple[Config, URL],
+) -> None:
+    """Verify migration 007 downgrades cleanly and removes all new columns."""
+    config, database_url = migration_database
+    command.upgrade(config, "head")
+    assert asyncio.run(_current_revision(database_url)) == "007_pending_lease"
+
+    columns_before = asyncio.run(_idempotency_columns(database_url))
+    assert {"owner_token", "lease_expires_at", "attempt_count"} <= columns_before
+
+    command.downgrade(config, "006_truncate_protection")
+    assert asyncio.run(_current_revision(database_url)) == "006_truncate_protection"
+
+    columns_after = asyncio.run(_idempotency_columns(database_url))
+    assert "owner_token" not in columns_after
+    assert "lease_expires_at" not in columns_after
+    assert "attempt_count" not in columns_after

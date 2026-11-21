@@ -5,8 +5,9 @@ from __future__ import annotations
 import os
 from collections.abc import Sequence
 from dataclasses import replace
-from datetime import UTC, datetime
+from datetime import datetime
 from typing import Any
+from uuid import uuid4
 
 from sqlalchemy import (
     BigInteger,
@@ -17,6 +18,7 @@ from sqlalchemy import (
     LargeBinary,
     String,
     Text,
+    func,
     insert,
     select,
     text,
@@ -123,6 +125,11 @@ class IdempotencyRow(Base):
     completed_at_utc: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
+    owner_token: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    lease_expires_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    attempt_count: Mapped[int] = mapped_column(Integer, server_default="1")
 
 
 _LOCK_KEY = 731_942_001
@@ -398,37 +405,62 @@ class PostgresLedger:
         key_hash: str,
         request_digest: str,
         claim_id: str,
-    ) -> tuple[str, dict[str, Any] | None]:
-        """Atomically reserve a key or return the already-recorded request state."""
+    ) -> tuple[str, str | None, dict[str, Any] | None]:
+        """Reserve a key or atomically take over an expired matching request."""
+        owner_token = uuid4().hex
+        lease_deadline = func.clock_timestamp() + text("INTERVAL '60 seconds'")
         try:
             async with self.engine.begin() as connection:
-                inserted = await connection.execute(
+                statement = (
                     pg_insert(IdempotencyRow)
                     .values(
                         key_hash=key_hash,
                         request_digest=request_digest,
                         claim_id=claim_id,
                         status="PENDING",
+                        owner_token=owner_token,
+                        lease_expires_at=lease_deadline,
+                        attempt_count=1,
                     )
-                    .on_conflict_do_nothing(index_elements=[IdempotencyRow.key_hash])
-                    .returning(IdempotencyRow.key_hash)
+                    .on_conflict_do_update(
+                        index_elements=[IdempotencyRow.key_hash],
+                        set_={
+                            "status": "PENDING",
+                            "owner_token": owner_token,
+                            "lease_expires_at": lease_deadline,
+                            "claim_id": claim_id,
+                            "attempt_count": IdempotencyRow.attempt_count + 1,
+                        },
+                        where=(
+                            (IdempotencyRow.status == "PENDING")
+                            & (IdempotencyRow.lease_expires_at < func.clock_timestamp())
+                            & (IdempotencyRow.request_digest == request_digest)
+                        ),
+                    )
+                    .returning(
+                        IdempotencyRow.status,
+                        IdempotencyRow.owner_token,
+                        IdempotencyRow.response_payload,
+                    )
                 )
-                is_new = inserted.scalar_one_or_none() is not None
+                acquired = await connection.execute(statement)
+                owned = acquired.mappings().one_or_none()
+                if owned is not None:
+                    return "NEW", owned["owner_token"], None
+
                 result = await connection.execute(
                     select(IdempotencyRow.__table__)
                     .where(IdempotencyRow.key_hash == key_hash)
                     .with_for_update()
                 )
                 row = IdempotencyRow(**dict(result.mappings().one()))
-                if is_new:
-                    return "NEW", None
                 if row.request_digest != request_digest:
-                    return "KEY_REUSED", None
+                    return "KEY_REUSED", None, None
                 if row.status == "COMPLETED":
-                    return "COMPLETED", row.response_payload
+                    return "COMPLETED", None, row.response_payload
                 if row.status == "PENDING":
-                    return "IN_PROGRESS", None
-                return "FAILED", None
+                    return "IN_PROGRESS", None, None
+                return "FAILED", None, None
         except SQLAlchemyError as exc:
             raise LedgerUnavailable("Idempotency reservation failed") from exc
 
@@ -437,10 +469,11 @@ class PostgresLedger:
         *,
         key_hash: str,
         request_digest: str,
+        owner_token: str,
         verdict_id: str,
         response_payload: dict[str, Any],
     ) -> None:
-        """Mark a reserved key complete with the exact response returned to the caller."""
+        """Complete only while this owner still holds an unexpired lease."""
         try:
             async with self.engine.begin() as connection:
                 result = await connection.execute(
@@ -448,35 +481,45 @@ class PostgresLedger:
                     .where(
                         IdempotencyRow.key_hash == key_hash,
                         IdempotencyRow.request_digest == request_digest,
+                        IdempotencyRow.owner_token == owner_token,
                         IdempotencyRow.status == "PENDING",
+                        IdempotencyRow.lease_expires_at > func.clock_timestamp(),
                     )
                     .values(
                         status="COMPLETED",
                         verdict_id=verdict_id,
                         response_payload=response_payload,
-                        completed_at_utc=datetime.now(UTC),
+                        completed_at_utc=func.clock_timestamp(),
                     )
                 )
                 if result.rowcount != 1:
-                    raise IntegrityViolation("idempotency reservation is not pending")
+                    raise IntegrityViolation("idempotency lease lost or no longer pending")
         except IntegrityViolation:
             raise
         except SQLAlchemyError as exc:
             raise LedgerUnavailable("Idempotency completion failed") from exc
 
-    async def fail_idempotency(self, *, key_hash: str, request_digest: str) -> None:
-        """Close a reserved key after a failed attempt; it cannot be silently reused."""
+    async def fail_idempotency(
+        self, *, key_hash: str, request_digest: str, owner_token: str
+    ) -> None:
+        """Fail only while this owner still holds an unexpired lease."""
         try:
             async with self.engine.begin() as connection:
-                await connection.execute(
+                result = await connection.execute(
                     update(IdempotencyRow)
                     .where(
                         IdempotencyRow.key_hash == key_hash,
                         IdempotencyRow.request_digest == request_digest,
+                        IdempotencyRow.owner_token == owner_token,
                         IdempotencyRow.status == "PENDING",
+                        IdempotencyRow.lease_expires_at > func.clock_timestamp(),
                     )
                     .values(status="FAILED")
                 )
+                if result.rowcount != 1:
+                    raise IntegrityViolation("lease lost or already failed")
+        except IntegrityViolation:
+            raise
         except SQLAlchemyError as exc:
             raise LedgerUnavailable("Idempotency failure recording failed") from exc
 

@@ -131,3 +131,40 @@ def test_database_trigger_rejects_delete_and_preserves_record() -> None:
         assert await ledger.verify_chain()
         await ledger.close()
     asyncio.run(run())
+
+
+def test_idempotency_owner_token_fences_terminal_transitions() -> None:
+    async def run() -> None:
+        ledger = PostgresLedger(DATABASE_URL)
+        await reset_ledger(ledger)
+        key_hash = compute_sha256(b"ledger-owner-token-test")
+        digest = compute_sha256(b'{"claim":"same"}')
+        state, owner_token, cached = await ledger.begin_idempotency(
+            key_hash=key_hash, request_digest=digest, claim_id="claim-owner-a"
+        )
+        assert state == "NEW"
+        assert owner_token is not None
+        assert cached is None
+        with pytest.raises(IntegrityViolation, match="lease lost"):
+            await ledger.complete_idempotency(
+                key_hash=key_hash,
+                request_digest=digest,
+                owner_token="wrong-owner",
+                verdict_id="not-written",
+                response_payload={"claim_id": "claim-owner-a"},
+            )
+        await ledger.complete_idempotency(
+            key_hash=key_hash,
+            request_digest=digest,
+            owner_token=owner_token,
+            verdict_id="verdict-owner-a",
+            response_payload={"claim_id": "claim-owner-a"},
+        )
+        state2, token2, cached2 = await ledger.begin_idempotency(
+            key_hash=key_hash, request_digest=digest, claim_id="claim-owner-b"
+        )
+        assert state2 == "COMPLETED"
+        assert token2 is None
+        assert cached2 == {"claim_id": "claim-owner-a"}
+        await ledger.close()
+    asyncio.run(run())
