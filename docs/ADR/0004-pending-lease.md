@@ -1,6 +1,6 @@
 # ADR-0004: Lease-based idempotency ownership
 
-- Status: Proposed for PR #9
+- Status: Accepted for MVP (PR #9)
 - Date: 2026-11-21
 - Scope: PostgreSQL idempotency reservation recovery and terminal-state fencing.
 
@@ -31,11 +31,15 @@ Lease expiry is a transient condition, not a persisted state. An expired PENDING
 
 A digest mismatch returns KEY_REUSED (HTTP 409), regardless of lease expiry. COMPLETED and FAILED are terminal and cannot be taken over. A missing, stale, or expired owner token cannot complete or fail the reservation; a zero-row update raises IntegrityViolation.
 
-## Known limitations
+## Known limitations and accepted MVP risk
 
 The current route performs provider arbitration, Evidence append, Verdict append, and idempotency completion in separate transactions. Consequently, an expired zombie owner can append Evidence and Verdict before its final complete() is rejected. Those records are append-only and remain in the ledger, associated with the zombie owner's original Claim. After takeover, multiple Evidence/Verdict rows may exist for the same client idempotency key across attempts. Only the current idempotency owner can complete the idempotency record, and the client receives the winning owner's cached response.
 
-This is an explicit MVP limitation, not full zombie-write protection. Full fencing requires propagating owner_token into Evidence append and Verdict append and validating the active lease atomically inside those append transactions. That work is deferred to a separate P2 issue.
+**Accepted boundary:** PR #9 provides lease ownership and fencing for idempotency reservation completion/failure only. It does not provide strict distributed fencing for all Ledger writes. In particular, owner_token is not currently propagated to or validated by Evidence `append()` and Verdict `append_verdict()`. Therefore the system must not claim exactly-once or zombie-write prevention for those append operations.
+
+The project owner explicitly accepts this residual zombie-append risk for the MVP on 2026-11-21, with strict Ledger-level fencing deferred to a separate P2 backlog task. This acceptance does not waive the requirement to implement and verify that follow-up before claiming full Ledger fencing.
+
+Full fencing requires propagating owner_token into Evidence append and Verdict append and validating the active lease atomically inside those append transactions. The follow-up must fail closed when the token is missing, stale, or expired and must include PostgreSQL integration tests proving a reclaimed worker cannot append either record.
 
 The 60-second lease can expire during a legitimately long provider operation. The old owner then cannot complete or fail the reservation; the client must retry and allow a new owner to proceed. No automatic lease renewal is implemented in this ADR.
 
@@ -45,4 +49,4 @@ The 60-second lease can expire during a legitimately long provider operation. Th
 - Concurrent takeover has one winner because PostgreSQL serializes the conflicting row update.
 - The request digest remains immutable across attempts.
 - claim_id tracks the current owner after takeover.
-- This mechanism fences terminal idempotency state transitions, but does not fence append-only ledger writes (see Known limitations).
+- This mechanism fences terminal idempotency state transitions, but does not fence append-only ledger writes (see Known limitations and accepted MVP risk).
