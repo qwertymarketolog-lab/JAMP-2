@@ -86,9 +86,15 @@ def claim_payload() -> dict[str, object]:
 
 async def reset_ledger(ledger: PostgresLedger) -> None:
     async with ledger.engine.begin() as connection:
-        await connection.execute(text("TRUNCATE TABLE idempotency_records"))
-        await connection.execute(text("TRUNCATE TABLE verdicts RESTART IDENTITY"))
-        await connection.execute(text("TRUNCATE TABLE evidence RESTART IDENTITY"))
+        # Test cleanup bypasses user triggers; production paths never disable them.
+        await connection.execute(text("ALTER TABLE evidence DISABLE TRIGGER USER"))
+        await connection.execute(text("ALTER TABLE verdicts DISABLE TRIGGER USER"))
+        try:
+            await connection.execute(text("TRUNCATE TABLE idempotency_records"))
+            await connection.execute(text("TRUNCATE TABLE verdicts, evidence RESTART IDENTITY"))
+        finally:
+            await connection.execute(text("ALTER TABLE evidence ENABLE TRIGGER USER"))
+            await connection.execute(text("ALTER TABLE verdicts ENABLE TRIGGER USER"))
 
 
 def test_api_server_verifies_claim_persists_raw_evidence_and_reads_it() -> None:
