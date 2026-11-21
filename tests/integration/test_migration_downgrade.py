@@ -8,13 +8,14 @@ import os
 import uuid
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Iterator
+from collections.abc import Iterator
 
 import asyncpg
 import pytest
-from alembic import command
 from alembic.config import Config
 from sqlalchemy.engine import URL, make_url
+
+from alembic import command
 
 DATABASE_URL = os.getenv("DATABASE_URL")
 pytestmark = pytest.mark.skipif(
