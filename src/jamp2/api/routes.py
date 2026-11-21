@@ -241,11 +241,11 @@ def build_router(
         )
         claim_id = str(uuid.uuid4())
         try:
-            reservation = await ledger.begin_idempotency(
+            reservation = cast(Any, await ledger.begin_idempotency(
                 key_hash=key_hash,
                 request_digest=request_digest,
                 claim_id=claim_id,
-            )
+            ))
             if len(reservation) == 2:  # Compatibility for existing in-memory test ledgers.
                 idempotency_state, cached_response = reservation
                 owner_token = None
