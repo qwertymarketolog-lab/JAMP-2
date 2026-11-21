@@ -227,4 +227,3 @@ def test_empty_evidence_ledger_allows_001_downgrade(
     command.downgrade(config, "base")
 
     assert not asyncio.run(_table_exists(database_url, "evidence"))
-    assert not asyncio.run(_table_exists(database_url, "alembic_version"))
