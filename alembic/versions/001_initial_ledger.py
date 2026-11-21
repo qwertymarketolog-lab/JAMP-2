@@ -55,6 +55,12 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
+    bind = op.get_bind()
+    existing_records = bind.execute(sa.text("SELECT count(*) FROM evidence")).scalar_one()
+    if existing_records:
+        raise RuntimeError(
+            "Cannot downgrade a populated evidence ledger without a hash-preserving migration."
+        )
     op.execute("DROP TRIGGER IF EXISTS evidence_immutable ON evidence")
     op.execute("DROP FUNCTION IF EXISTS reject_evidence_mutation()")
     op.drop_index("ix_evidence_claim_id", table_name="evidence")
