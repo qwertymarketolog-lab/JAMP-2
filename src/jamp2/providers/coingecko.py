@@ -16,9 +16,11 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from collections import deque
+from datetime import UTC, datetime
 from typing import Any
 
 from jamp2.domain.claim import Claim as Jamp2Claim
+from jamp2.domain.claim import NormalizedClaim
 from jamp2.providers.base import ProviderResult
 
 COINGECKO_BASE = "https://api.coingecko.com/api/v3"
@@ -70,6 +72,8 @@ def _get_json(
             raw_evidence.append({
                 "source": "coingecko",
                 "url": url,
+                "provider_observed_at": None,
+                "fetched_at": datetime.now(UTC).isoformat(),
                 "status_code": exc.code,
                 "body_complete": True,
                 "raw_body_base64": base64.b64encode(body).decode("ascii"),
@@ -325,8 +329,28 @@ def verify_claim(claim: Jamp2Claim) -> ProviderResult:
         claim.ticker, claim_type, claim.value, capture_raw=True
     )
     raw_evidence = details.pop("raw_evidence", [])
-    return ProviderResult(status, details, raw_evidence)
+    return ProviderResult(
+        status,
+        {
+            **details,
+            "source_identifiers": (
+                [claim.ticker] if status in {E4_VERIFIED, E4_CONTRADICTED} else []
+            ),
+            "quote_currency": claim.currency or "USD",
+            "price_type": "SPOT",
+        },
+        raw_evidence,
+    )
 
 class CoinGeckoProvider:
-    def verify_claim(self, claim: Jamp2Claim) -> ProviderResult:
-        return verify_claim(claim)
+    def verify_claim(self, claim: NormalizedClaim) -> ProviderResult:
+        if claim.subject_kind != "crypto_asset":
+            return ProviderResult(E4_OUT_OF_SCOPE, {"reason": "SUBJECT_KIND_NOT_SUPPORTED"})
+        provider_claim = Jamp2Claim(
+            claim.text,
+            claim.predicate,
+            claim.subject_identifier,
+            claim.expected_value,
+            claim.unit,
+        )
+        return verify_claim(provider_claim)
