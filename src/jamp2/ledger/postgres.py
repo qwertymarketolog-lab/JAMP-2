@@ -6,8 +6,8 @@ import os
 from collections.abc import Sequence
 from dataclasses import replace
 from datetime import datetime
-from uuid import uuid4
 from typing import Any
+from uuid import uuid4
 
 from sqlalchemy import (
     BigInteger,
