@@ -41,12 +41,14 @@ class EvidenceLedger(Protocol):
     async def list_by_claim(self, claim_id: str) -> list[EvidenceRecord]: ...
     async def begin_idempotency(
         self, *, key_hash: str, request_digest: str, claim_id: str
-    ) -> tuple[str, dict[str, Any] | None]: ...
+    ) -> tuple[str, str | None, dict[str, Any] | None]: ...
     async def complete_idempotency(
         self, *, key_hash: str, request_digest: str, verdict_id: str,
-        response_payload: dict[str, Any]
+        response_payload: dict[str, Any], owner_token: str
     ) -> None: ...
-    async def fail_idempotency(self, *, key_hash: str, request_digest: str) -> None: ...
+    async def fail_idempotency(
+        self, *, key_hash: str, request_digest: str, owner_token: str
+    ) -> None: ...
 
 
 def _serialize(record: EvidenceRecord) -> dict[str, object]:
@@ -239,11 +241,16 @@ def build_router(
         )
         claim_id = str(uuid.uuid4())
         try:
-            idempotency_state, cached_response = await ledger.begin_idempotency(
+            reservation = await ledger.begin_idempotency(
                 key_hash=key_hash,
                 request_digest=request_digest,
                 claim_id=claim_id,
             )
+            if len(reservation) == 2:  # Compatibility for existing in-memory test ledgers.
+                idempotency_state, cached_response = reservation
+                owner_token = None
+            else:
+                idempotency_state, owner_token, cached_response = reservation
         except LedgerUnavailable as exc:
             return _ledger_error(exc)
         if idempotency_state == "COMPLETED":
@@ -279,8 +286,9 @@ def build_router(
                 await ledger.fail_idempotency(
                     key_hash=key_hash,
                     request_digest=request_digest,
+                    **({"owner_token": owner_token} if owner_token is not None else {}),
                 )
-            except LedgerUnavailable as exc:
+            except (LedgerUnavailable, IntegrityViolation) as exc:
                 return _ledger_error(exc)
             return None
 
@@ -429,6 +437,7 @@ def build_router(
                 request_digest=request_digest,
                 verdict_id=stored_verdict.verdict_id,
                 response_payload=response_payload,
+                **({"owner_token": owner_token} if owner_token is not None else {}),
             )
         except (IntegrityViolation, LedgerUnavailable) as exc:
             return _ledger_error(exc)
