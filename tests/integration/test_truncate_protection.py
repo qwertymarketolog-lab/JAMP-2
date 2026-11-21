@@ -55,9 +55,23 @@ def make_verdict() -> VerdictRecord:
     )
 
 
+async def reset_ledger(ledger: PostgresLedger) -> None:
+    async with ledger.engine.begin() as connection:
+        # Test-only bypass; production code never disables ledger triggers.
+        await connection.execute(text("ALTER TABLE evidence DISABLE TRIGGER USER"))
+        await connection.execute(text("ALTER TABLE verdicts DISABLE TRIGGER USER"))
+        try:
+            await connection.execute(text("TRUNCATE TABLE idempotency_records"))
+            await connection.execute(text("TRUNCATE TABLE verdicts, evidence RESTART IDENTITY"))
+        finally:
+            await connection.execute(text("ALTER TABLE evidence ENABLE TRIGGER USER"))
+            await connection.execute(text("ALTER TABLE verdicts ENABLE TRIGGER USER"))
+
+
 def test_truncate_evidence_is_blocked_and_record_survives() -> None:
     async def run() -> None:
         ledger = PostgresLedger(DATABASE_URL)
+        await reset_ledger(ledger)
         record = await ledger.append(make_evidence())
         with pytest.raises(DBAPIError, match="TRUNCATE not allowed"):
             async with ledger.engine.begin() as connection:
@@ -73,6 +87,7 @@ def test_truncate_evidence_is_blocked_and_record_survives() -> None:
 def test_truncate_verdicts_is_blocked_and_record_survives() -> None:
     async def run() -> None:
         ledger = PostgresLedger(DATABASE_URL)
+        await reset_ledger(ledger)
         await ledger.append(make_evidence())
         verdict = await ledger.append_verdict(make_verdict())
         with pytest.raises(DBAPIError, match="TRUNCATE not allowed"):
