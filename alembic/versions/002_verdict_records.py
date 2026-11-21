@@ -65,6 +65,12 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
+    bind = op.get_bind()
+    existing_records = bind.execute(sa.text("SELECT count(*) FROM verdicts")).scalar_one()
+    if existing_records:
+        raise RuntimeError(
+            "Cannot downgrade a populated verdict ledger without a hash-preserving migration."
+        )
     op.execute("DROP TRIGGER IF EXISTS verdict_immutable ON verdicts")
     op.execute("DROP FUNCTION IF EXISTS reject_verdict_mutation()")
     op.drop_index("ix_verdicts_claim_id", table_name="verdicts")
