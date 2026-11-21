@@ -132,6 +132,7 @@ def test_database_trigger_rejects_delete_and_preserves_record() -> None:
         await ledger.close()
     asyncio.run(run())
 
+
 def test_idempotency_owner_token_fences_terminal_transitions() -> None:
     async def run() -> None:
         ledger = PostgresLedger(DATABASE_URL)
