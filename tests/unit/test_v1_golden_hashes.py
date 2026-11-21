@@ -13,7 +13,6 @@ from jamp2.evidence.digest import compute_record_hash, compute_sha256, compute_v
 from jamp2.evidence.model import EvidenceRecord
 from jamp2.evidence.verdict import VerdictRecord
 
-
 RAW_BODY = b'{"price":100}'
 RAW_SHA256 = "fbcfc7a6ca136b21ff0a7101016fc91230798ffc2e6f5fc856df2fc29adca67a"
 
