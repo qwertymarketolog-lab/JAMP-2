@@ -229,7 +229,6 @@ def test_empty_evidence_ledger_allows_001_downgrade(
     assert not asyncio.run(_table_exists(database_url, "evidence"))
 
 
-
 async def _trigger_exists(database_url: URL, table: str, trigger: str) -> bool:
     connection = await asyncpg.connect(
         **_connect_kwargs(database_url, database_url.database or "")
