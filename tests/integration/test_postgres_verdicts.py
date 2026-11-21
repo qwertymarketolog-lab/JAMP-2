@@ -58,9 +58,15 @@ def make_verdict(evidence_id: str = "evidence-verdict-1") -> VerdictRecord:
 
 async def reset_ledger(ledger: PostgresLedger) -> None:
     async with ledger.engine.begin() as connection:
-        await connection.execute(text("TRUNCATE TABLE idempotency_records"))
-        await connection.execute(text("TRUNCATE TABLE verdicts RESTART IDENTITY"))
-        await connection.execute(text("TRUNCATE TABLE evidence RESTART IDENTITY"))
+        # Test cleanup bypasses user triggers; production paths never disable them.
+        await connection.execute(text("ALTER TABLE evidence DISABLE TRIGGER USER"))
+        await connection.execute(text("ALTER TABLE verdicts DISABLE TRIGGER USER"))
+        try:
+            await connection.execute(text("TRUNCATE TABLE idempotency_records"))
+            await connection.execute(text("TRUNCATE TABLE verdicts, evidence RESTART IDENTITY"))
+        finally:
+            await connection.execute(text("ALTER TABLE evidence ENABLE TRIGGER USER"))
+            await connection.execute(text("ALTER TABLE verdicts ENABLE TRIGGER USER"))
 
 
 def test_verdict_persists_references_evidence_and_survives_restart() -> None:

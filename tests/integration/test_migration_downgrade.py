@@ -227,3 +227,56 @@ def test_empty_evidence_ledger_allows_001_downgrade(
     command.downgrade(config, "base")
 
     assert not asyncio.run(_table_exists(database_url, "evidence"))
+
+
+async def _trigger_exists(database_url: URL, table: str, trigger: str) -> bool:
+    connection = await asyncpg.connect(
+        **_connect_kwargs(database_url, database_url.database or "")
+    )
+    try:
+        return await connection.fetchval(
+            """
+            SELECT EXISTS (
+                SELECT 1
+                FROM pg_trigger
+                WHERE tgrelid = to_regclass($1)
+                  AND tgname = $2
+                  AND NOT tgisinternal
+            )
+            """,
+            f"public.{table}",
+            trigger,
+        )
+    finally:
+        await connection.close()
+
+
+async def _truncate_function_exists(database_url: URL) -> bool:
+    connection = await asyncpg.connect(
+        **_connect_kwargs(database_url, database_url.database or "")
+    )
+    try:
+        return await connection.fetchval(
+            "SELECT to_regprocedure('public.prevent_truncate()') IS NOT NULL"
+        )
+    finally:
+        await connection.close()
+
+
+def test_006_truncate_protection_upgrade_and_downgrade(
+    migration_database: tuple[Config, URL],
+) -> None:
+    config, database_url = migration_database
+    command.upgrade(config, "head")
+
+    assert asyncio.run(_current_revision(database_url)) == "006_truncate_protection"
+    assert asyncio.run(_trigger_exists(database_url, "evidence", "evidence_no_truncate"))
+    assert asyncio.run(_trigger_exists(database_url, "verdicts", "verdicts_no_truncate"))
+    assert asyncio.run(_truncate_function_exists(database_url))
+
+    command.downgrade(config, "005_idempotency")
+
+    assert asyncio.run(_current_revision(database_url)) == "005_idempotency"
+    assert not asyncio.run(_trigger_exists(database_url, "evidence", "evidence_no_truncate"))
+    assert not asyncio.run(_trigger_exists(database_url, "verdicts", "verdicts_no_truncate"))
+    assert not asyncio.run(_truncate_function_exists(database_url))
