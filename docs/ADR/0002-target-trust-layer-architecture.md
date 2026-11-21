@@ -4,16 +4,16 @@
 - **Date:** 2026-11-20
 - **Decision owner:** JAMP project owner
 - **Supersedes:** None
-- **Related:** ADR-0001, `docs/CHARTER.md`, `docs/EPISTEMIC_CONTRACT.md`, `docs/MIGRATION_LEDGER.md`
-- **Baseline:** `main` at `d0ab1b521c8ed6772387e994d693c160cc59ba5e`
+- **Related:** [ADR-0001 — Trust Layer boundary](0001-trust-layer-boundary.md), [ADR-0003 — Evidence Ledger limitations](0003-ledger-limits.md), `docs/CHARTER.md`, `docs/EPISTEMIC_CONTRACT.md`, `docs/MIGRATION_LEDGER.md`
+- **Implementation status baseline:** `main` at `d6f46819cf7713b03502b3b666fd530c0be0070f` (2026-11-21)
 
 ## 1. Context
 
 ADR-0001 established a clean JAMP 2 repository and a narrow Trust Layer boundary. The independent JAMP → JAMP 2 audit recommends keeping that direction but adjusting the implementation sequence and the API, Claim, Evidence, and Verdict boundaries.
 
-The current first persistence/API slice (PR #3) exposes `POST /v1/evidence` with client-supplied provider metadata, capture time, raw bytes, parsed value, and verdict status. A matching client-supplied SHA-256 proves only that the submitted bytes match the submitted digest. It does not prove that JAMP acquired the response from the claimed provider, that the timestamp is authentic, or that the parsed value and verdict follow the approved policy.
+The initial client-write Evidence endpoint was rejected as a public trust boundary and removed during PR #3 implementation. The current public intake is `POST /v1/claims/verify`: JAMP accepts a typed Claim, acquires provider observations server-side, and persists Evidence and Verdict records. Client-supplied Evidence is not accepted through a public ingestion route.
 
-This ADR records the proposed target contract before further implementation. It does not authorize source-code changes or PR #3 merge.
+This ADR records the accepted target architecture and the implementation state observed on the stated baseline. It does not itself authorize changes beyond its documented scope.
 
 ## 2. Decision summary
 
@@ -81,7 +81,7 @@ The Trust Layer, not an untrusted client, owns provider acquisition, validation,
 
 1. For externally exposed verification, the server-side Provider adapter obtains the source response itself.
 2. Client-supplied raw evidence must never be treated as provider-authenticated evidence merely because its digest matches.
-3. The existing `POST /v1/evidence` ingestion route must not be exposed as a public client operation. It must either be removed from the public router or restricted to an explicitly trusted internal boundary with authentication and authorization. The exact implementation is deferred to a separately approved change.
+3. The former client-write `POST /v1/evidence` route is removed from the public API. Public verification begins at `POST /v1/claims/verify`; provider acquisition and Evidence creation are server-side.
 4. Provider adapters capture raw response bytes before parsing, calculate the digest server-side, and retain source/request metadata and source timestamps where available.
 5. Integrity, source identity/authority, semantic correctness, and freshness are separate properties. A digest proves byte integrity relative to the digest; it does not prove source truth or freshness.
 6. Provider outages, malformed responses, missing values, unsupported scope, and conflicting observations must remain explicit non-positive outcomes.
@@ -162,9 +162,10 @@ The target public workflow is conceptually:
 
 - `POST /v1/claims/verify` — accept a typed Claim (and, in a later adapter, text whose extracted Claims are explicitly surfaced for acceptance); JAMP performs provider acquisition, verification, and persistence.
 - `GET /v1/verdicts/{verdict_id}` — return the immutable Verdict Record and its referenced evidence metadata.
-- `GET /v1/verdicts/{verdict_id}/replay` — verify/recompute from stored raw evidence and the recorded policy version.
+- `POST /v1/verdicts/{verdict_id}/replay` — verify/recompute from stored raw evidence and the recorded policy version.
+- `GET /v1/evidence/{evidence_id}` — return a stored Evidence Record.
 
-These paths describe the target contract, not an authorization to implement them immediately. Exact request/response schemas, status codes, idempotency semantics, rate limits, and API version compatibility require a follow-up API contract.
+These are the four authenticated public routes currently implemented on the status baseline above. Exact request/response schemas, status codes, idempotency semantics, rate limits, and API version compatibility remain governed by the implementation and follow-up API contract.
 
 A client must not be able to submit arbitrary provider observations and choose the verdict that JAMP then presents as its own verification.
 
@@ -225,8 +226,7 @@ The first vertical slice is complete only when evidence demonstrates all of the 
 - The product path is one narrow end-to-end scenario rather than parallel expansion of unrelated platform components.
 
 **Costs and trade-offs**
-- PR #3 may require a revised scope or follow-up implementation work before merge.
-- Separate Evidence and Verdict records increase schema and migration complexity.
+- The implemented Claim verification and separate Evidence/Verdict records increase schema, migration, and operational complexity.
 - Reproducible replay requires policy/version retention and compatibility discipline.
 - Authentication and tenant isolation move earlier in the roadmap.
 - External anchoring and universal freshness remain out of scope for the MVP.
@@ -270,8 +270,11 @@ Any implementation must be split into narrowly scoped changes, reviewed against 
 ## 12. Current state
 
 - **ADR status:** ACCEPTED — approved by project owner on 2026-11-20.
-- **PR #3:** OPEN / HOLD; no merge authorized.
-- **Source code:** unchanged by this ADR.
+- **Baseline:** JAMP 2 `main` at `d6f46819cf7713b03502b3b666fd530c0be0070f` (PR #3 and PR #6 are merged).
+- **Ledger:** separate Evidence and Verdict records with append-only application semantics and hash-chain integrity; PostgreSQL row-level UPDATE/DELETE protection is present. TRUNCATE protection is a planned hardening item, not yet implemented (see ADR-0003).
+- **API:** four authenticated public routes: `POST /v1/claims/verify`, `GET /v1/verdicts/{verdict_id}`, `POST /v1/verdicts/{verdict_id}/replay`, and `GET /v1/evidence/{evidence_id}`. The client-write `POST /v1/evidence` route is absent.
+- **Replay:** deterministic single-source replay is implemented; multi-source replay is not supported and remains backlog (see ADR-0003).
+- **Source code:** PR #3 and PR #6 implementation is present on `main`; this ADR remains an architecture decision, not runtime evidence.
 - **JAMP 1:** unchanged; Frozen Core remains governed by ADR-0001 and its existing invariant.
 
 **Governing principle: Proof over confidence. AI proposes; JAMP acquires, verifies, and preserves evidence.**
