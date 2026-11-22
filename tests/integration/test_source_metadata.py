@@ -26,7 +26,6 @@ from jamp2.evidence.policy import SourcePolicyRecord
 from jamp2.providers.moex import _moex_capture_metadata
 
 
-
 def _claim(kind: str, identifier: str, unit: str) -> NormalizedClaim:
     return NormalizedClaim(
         text="current price claim", subject_kind=kind, subject_identifier=identifier,
@@ -192,13 +191,14 @@ def test_migration_008_preserves_populated_evidence_and_verdict_ledgers(
                 INSERT INTO evidence (
                     evidence_id, claim_id, provider, url, http_status, raw_body_bytes,
                     raw_sha256, captured_at_utc, parsed_value, verdict_status,
-                    parent_hash, record_hash
-                ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb,$10,$11,$12)
+                    canonicalization_version, parent_hash, record_hash
+                ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb,$10,$11,$12,$13)
                 """,
                 "evidence-legacy", "claim-legacy", "test-provider",
                 "https://example.test/evidence", 200, raw_body,
                 hashlib.sha256(raw_body).hexdigest(), datetime.now(UTC),
-                '{"price":100}', "OBSERVATION_CAPTURED", None, "a" * 64,
+                '{"price":100}', "OBSERVATION_CAPTURED", "jamp-json-nfc-v1",
+                None, "a" * 64,
             )
             await connection.execute(
                 """
