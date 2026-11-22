@@ -31,6 +31,10 @@ class EvidenceRecord:
     body_complete: bool = True
     provider_adapter_version: str = "provider-adapter-v1"
     parser_version: str = "provider-parser-v1"
+    hash_schema_version: str = "v1"
+    fetched_at: datetime | None = None
+    provider_observed_at: datetime | None = None
+    source_date: str | None = None
 
     def __post_init__(self) -> None:
         required_strings = (
@@ -66,6 +70,21 @@ class EvidenceRecord:
             or self.captured_at_utc.utcoffset() != timedelta(0)
         ):
             raise ValueError("captured_at_utc must be timezone-aware UTC")
+        if self.hash_schema_version not in {"v1", "v2"}:
+            raise ValueError("hash_schema_version must be v1 or v2")
+        if self.hash_schema_version == "v1" and any(
+            value is not None for value in (self.fetched_at, self.provider_observed_at, self.source_date)
+        ):
+            raise ValueError("source metadata requires hash_schema_version v2")
+        for field_name, value in (("fetched_at", self.fetched_at), ("provider_observed_at", self.provider_observed_at)):
+            if value is not None and (
+                not isinstance(value, datetime) or value.tzinfo is None or value.utcoffset() is None
+            ):
+                raise ValueError(f"{field_name} must be timezone-aware or null")
+        if self.source_date is not None and (
+            not isinstance(self.source_date, str) or not self.source_date.strip()
+        ):
+            raise ValueError("source_date must be a non-empty string or null")
         if self.parent_hash is not None and (
             not isinstance(self.parent_hash, str) or not self.parent_hash
         ):
