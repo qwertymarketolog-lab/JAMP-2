@@ -14,6 +14,7 @@ import pytest
 
 from jamp2.api.app import create_app
 from jamp2.domain.claim import NormalizedClaim
+from jamp2.evidence.digest import compute_record_hash
 from jamp2.evidence.model import EvidenceRecord
 from jamp2.evidence.multisource import MultiSourcePolicy, SourceSpec, arbitrate
 from jamp2.evidence.policy import SourcePolicyRecord, SourceProvenance
@@ -38,8 +39,16 @@ class MemoryLedger:
         self.idempotency: dict[str, dict[str, Any]] = {}
 
     async def append(self, record: EvidenceRecord) -> EvidenceRecord:
-        self.records.append(record)
-        return record
+        persisted = EvidenceRecord(
+            **{
+                field: getattr(record, field)
+                for field in record.__dataclass_fields__
+                if field != "record_hash"
+            },
+            record_hash=compute_record_hash(record),
+        )
+        self.records.append(persisted)
+        return persisted
 
     async def get(self, evidence_id: str) -> EvidenceRecord | None:
         return next(
