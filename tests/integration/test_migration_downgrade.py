@@ -269,7 +269,7 @@ def test_006_truncate_protection_upgrade_and_downgrade(
     config, database_url = migration_database
     command.upgrade(config, "head")
 
-    assert asyncio.run(_current_revision(database_url)) == "007_pending_lease"
+    assert asyncio.run(_current_revision(database_url)) == "008_source_metadata"
     assert asyncio.run(_trigger_exists(database_url, "evidence", "evidence_no_truncate"))
     assert asyncio.run(_trigger_exists(database_url, "verdicts", "verdicts_no_truncate"))
     assert asyncio.run(_truncate_function_exists(database_url))
@@ -305,7 +305,7 @@ def test_downgrade_007_pending_lease(
     """Verify migration 007 downgrades cleanly and removes all new columns."""
     config, database_url = migration_database
     command.upgrade(config, "head")
-    assert asyncio.run(_current_revision(database_url)) == "007_pending_lease"
+    assert asyncio.run(_current_revision(database_url)) == "008_source_metadata"
 
     columns_before = asyncio.run(_idempotency_columns(database_url))
     assert {"owner_token", "lease_expires_at", "attempt_count"} <= columns_before
