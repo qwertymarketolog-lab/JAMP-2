@@ -58,13 +58,15 @@ def _outcome(source: SourceSpec, identifier: str, *, quote: str,
         "market_calendar_valid": calendar,
     }
     observation = SourceObservation(
-        source_id=source.provider_id, fact_key=f"{identifier}:price",
+        source_id=source.provider_id, fact_key=f"{source.provider_key if source.provider_key == "moex" else "crypto_asset"}:{identifier}:price",
         value=100, unit=quote, usable=True,
     )
     return SourceOutcome(source, "E4_VERIFIED", details, [captured], observation)
 
 
-def _evidence_records(outcomes: tuple[SourceOutcome, ...]) -> tuple[EvidenceRecord, ...]:
+def _evidence_records(
+    outcomes: tuple[SourceOutcome, ...], claim: NormalizedClaim
+) -> tuple[EvidenceRecord, ...]:
     records: list[EvidenceRecord] = []
     for outcome in outcomes:
         for capture in outcome.raw_evidence:
@@ -81,6 +83,14 @@ def _evidence_records(outcomes: tuple[SourceOutcome, ...]) -> tuple[EvidenceReco
                 raw_sha256=compute_sha256(raw),
                 captured_at_utc=fetched_at,
                 parsed_value={
+                    "claim": {
+                        "text": claim.text,
+                        "subject_kind": claim.subject_kind,
+                        "subject_identifier": claim.subject_identifier,
+                        "predicate": claim.predicate,
+                        "expected_value": claim.expected_value,
+                        "unit": claim.unit,
+                    },
                     "source_status": outcome.status,
                     "provider_result": outcome.details,
                 },
@@ -120,13 +130,14 @@ def _policy(source: SourceSpec, *, asset: str, identifier: str, quote: str,
 
 def test_moex_without_confirmed_calendar_is_ambiguous_and_blocked():
     source = SourceSpec("moex", "moex.iss", "iss.moex.com", "moex-iss-adapter-v1")
+    claim = _claim("equity_security", "SBER", "RUB")
     outcome = _outcome(source, "SBER", quote="RUB", price_type="LAST_DEAL", calendar=None)
     result = arbitrate_from_evidence(
-        _claim("equity_security", "SBER", "RUB"),
+        claim,
         _policy(source, asset="equity_security", identifier="SBER", quote="RUB",
                 price_type="LAST_DEAL", calendar_required=True),
         (outcome,),
-        _evidence_records((outcome,)),
+        _evidence_records((outcome,), claim),
     )
     assert result.verdict_status == "AMBIGUOUS"
     assert "SOURCE_MARKET_CALENDAR_UNCONFIRMED" in result.reason_codes
@@ -137,13 +148,14 @@ def test_moex_without_confirmed_calendar_is_ambiguous_and_blocked():
 
 def test_fresh_coingecko_source_is_verified_without_network():
     source = SourceSpec("coingecko", "coingecko", "api.coingecko.com", "coingecko-adapter-v1")
+    claim = _claim("crypto_asset", "bitcoin", "USD")
     outcome = _outcome(source, "bitcoin", quote="USD", price_type="SPOT", calendar=None)
     result = arbitrate_from_evidence(
-        _claim("crypto_asset", "bitcoin", "USD"),
+        claim,
         _policy(source, asset="crypto_asset", identifier="bitcoin", quote="USD",
                 price_type="SPOT", calendar_required=False),
         (outcome,),
-        _evidence_records((outcome,)),
+        _evidence_records((outcome,), claim),
     )
     assert result.verdict_status == "VERIFIED"
     assert result.verification_mode == "SINGLE_SOURCE"
@@ -152,15 +164,16 @@ def test_fresh_coingecko_source_is_verified_without_network():
 
 def test_stale_coingecko_source_is_ambiguous_not_inconclusive():
     source = SourceSpec("coingecko", "coingecko", "api.coingecko.com", "coingecko-adapter-v1")
+    claim = _claim("crypto_asset", "bitcoin", "USD")
     outcome = _outcome(
         source, "bitcoin", quote="USD", price_type="SPOT", calendar=None, age_seconds=301
     )
     result = arbitrate_from_evidence(
-        _claim("crypto_asset", "bitcoin", "USD"),
+        claim,
         _policy(source, asset="crypto_asset", identifier="bitcoin", quote="USD",
                 price_type="SPOT", calendar_required=False),
         (outcome,),
-        _evidence_records((outcome,)),
+        _evidence_records((outcome,), claim),
     )
     assert result.verdict_status == "AMBIGUOUS"
     assert result.reason_codes
