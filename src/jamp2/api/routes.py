@@ -168,6 +168,8 @@ def _evidence_record(
     except (binascii.Error, ValueError) as exc:
         raise IntegrityViolation("provider returned invalid base64 evidence") from exc
     actual_digest = compute_sha256(raw_body)
+    source_date_value = observation.get("source_date")
+    source_date = source_date_value if isinstance(source_date_value, str) else None
     if not hmac.compare_digest(actual_digest, source_digest):
         raise IntegrityViolation("provider raw response digest mismatch")
     if source != provider_id:
@@ -191,10 +193,7 @@ def _evidence_record(
         hash_schema_version="v2",
         fetched_at=_capture_datetime(observation.get("fetched_at")),
         provider_observed_at=_capture_datetime(observation.get("provider_observed_at")),
-        source_date=(
-            observation.get("source_date")
-            if isinstance(observation.get("source_date"), str) else None
-        ),
+        source_date=source_date,
     )
 
 
