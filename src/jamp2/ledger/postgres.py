@@ -35,12 +35,8 @@ from jamp2.evidence.digest import (
     compute_sha256,
     compute_verdict_hash,
 )
-from jamp2.evidence.model import EvidenceRecord, JSONValue
+from jamp2.evidence.model import EvidenceRecord, IntegrityViolation, JSONValue, LedgerError
 from jamp2.evidence.verdict import VerdictRecord
-
-
-class LedgerError(Exception):
-    """Base class for expected ledger failures."""
 
 
 class DuplicateEvidence(LedgerError):
@@ -49,10 +45,6 @@ class DuplicateEvidence(LedgerError):
 
 class DuplicateVerdict(LedgerError):
     """Raised when verdict_id already exists."""
-
-
-class IntegrityViolation(LedgerError):
-    """Raised when persisted evidence, verdict, or their links are inconsistent."""
 
 
 class LedgerUnavailable(LedgerError):
