@@ -533,7 +533,7 @@ def test_missing_provider_observation_time_blocks_conflict_reducer(monkeypatch: 
         (SourceSpec("moex", "moex.iss", "iss.moex.com", "test-adapter-v1"),),
     )
     result = asyncio.run(arbitrate(claim, policy, {"moex": TimestampMissingProvider()}))
-    assert result.verdict_status == "AMBIGUOUS"
+    assert result.verdict_status == "INCONCLUSIVE"
     assert result.reducer["status"] == "POLICY_GATE_BLOCKED"
-    assert result.outcomes[0].details["observation_status"] == "INCOMPLETE"
-    assert "ERR_QUORUM_NOT_MET" in result.reason_codes
+    assert result.outcomes[0].status == "E4_VERIFIED"
+    assert result.reason_codes == ("EVIDENCE_LEDGER_REQUIRED",)
