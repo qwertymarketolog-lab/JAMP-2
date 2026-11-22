@@ -10,6 +10,7 @@ import asyncpg
 import pytest
 from alembic.config import Config
 from sqlalchemy.engine import URL, make_url
+
 from alembic import command
 from jamp2.domain.claim import NormalizedClaim
 from jamp2.evidence.conflict import SourceObservation
