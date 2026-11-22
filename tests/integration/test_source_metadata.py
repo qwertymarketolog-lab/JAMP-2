@@ -63,7 +63,9 @@ def _policy(source: SourceSpec, *, asset: str, identifier: str, quote: str,
         quote_currency=quote, price_type=price_type,
         required_sources=(source.provider_id,), independence_group="offline-e2e",
         max_age_seconds=3600,
-        max_age_by_source={"moex.iss": 1200, "coingecko": 300},
+        max_age_by_source={
+            source.provider_id: {"moex.iss": 1200, "coingecko": 300}[source.provider_id]
+        },
         max_time_skew_seconds=5, verification_mode="SINGLE_SOURCE",
     )
     return MultiSourcePolicy("offline-e2e", "v1", (source,), source_policy=source_policy)
