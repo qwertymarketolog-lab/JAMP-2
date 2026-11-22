@@ -14,8 +14,8 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from datetime import UTC, datetime
-from zoneinfo import ZoneInfo
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from jamp2.domain.claim import Claim as Jamp2Claim
 from jamp2.domain.claim import NormalizedClaim
