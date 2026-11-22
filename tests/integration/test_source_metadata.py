@@ -14,11 +14,14 @@ from sqlalchemy.engine import URL, make_url
 
 from jamp2.domain.claim import NormalizedClaim
 from jamp2.evidence.conflict import SourceObservation
-from jamp2.evidence.multisource import (
-    MultiSourcePolicy, SourceOutcome, SourceSpec, arbitrate_from_evidence,
-)
-from jamp2.evidence.model import EvidenceRecord, IntegrityViolation
 from jamp2.evidence.digest import compute_record_hash, compute_sha256
+from jamp2.evidence.model import EvidenceRecord, IntegrityViolation
+from jamp2.evidence.multisource import (
+    MultiSourcePolicy,
+    SourceOutcome,
+    SourceSpec,
+    arbitrate_from_evidence,
+)
 from jamp2.evidence.policy import SourcePolicyRecord
 from jamp2.providers.moex import _moex_capture_metadata
 
