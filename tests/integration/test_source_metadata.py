@@ -191,14 +191,17 @@ def test_migration_008_preserves_populated_evidence_and_verdict_ledgers(
                 INSERT INTO evidence (
                     evidence_id, claim_id, provider, url, http_status, raw_body_bytes,
                     raw_sha256, captured_at_utc, parsed_value, verdict_status,
-                    canonicalization_version, parent_hash, record_hash
-                ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb,$10,$11,$12,$13)
+                    canonicalization_version, body_complete, provider_adapter_version,
+                    parser_version, parent_hash, record_hash
+                ) VALUES (
+                    $1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb,$10,$11,$12,$13,$14,$15,$16
+                )
                 """,
                 "evidence-legacy", "claim-legacy", "test-provider",
                 "https://example.test/evidence", 200, raw_body,
                 hashlib.sha256(raw_body).hexdigest(), datetime.now(UTC),
                 '{"price":100}', "OBSERVATION_CAPTURED", "jamp-json-nfc-v1",
-                None, "a" * 64,
+                True, "provider-adapter-v1", "provider-parser-v1", None, "a" * 64,
             )
             await connection.execute(
                 """
