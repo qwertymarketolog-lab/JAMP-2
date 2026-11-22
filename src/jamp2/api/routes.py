@@ -19,7 +19,12 @@ from jamp2.domain.claim import NormalizedClaim
 from jamp2.evidence.canonicalize import CANONICALIZATION_VERSION, canonicalize
 from jamp2.evidence.digest import compute_record_hash, compute_sha256
 from jamp2.evidence.model import EvidenceRecord, JSONValue
-from jamp2.evidence.multisource import MultiSourcePolicy, SourceSpec, arbitrate
+from jamp2.evidence.multisource import (
+    MultiSourcePolicy,
+    SourceSpec,
+    arbitrate_from_evidence,
+    fetch_provider_results,
+)
 from jamp2.evidence.replay import replay_verdict
 from jamp2.evidence.verdict import VerdictRecord
 from jamp2.ledger.postgres import (
@@ -65,6 +70,12 @@ def _serialize(record: EvidenceRecord) -> dict[str, object]:
         "verdict_status": record.verdict_status,
         "canonicalization_version": record.canonicalization_version,
         "source_timestamp": record.source_timestamp,
+        "hash_schema_version": record.hash_schema_version,
+        "fetched_at": record.fetched_at.isoformat() if record.fetched_at else None,
+        "provider_observed_at": (
+            record.provider_observed_at.isoformat() if record.provider_observed_at else None
+        ),
+        "source_date": record.source_date,
         "body_complete": record.body_complete,
         "provider_adapter_version": record.provider_adapter_version,
         "parser_version": record.parser_version,
@@ -106,6 +117,21 @@ def _provider_configuration(
     if subject_kind == "crypto_asset" and unit == "USD":
         return "coingecko", "coingecko", "api.coingecko.com", "coingecko-adapter-v1"
     return None
+
+
+def _capture_datetime(value: object) -> datetime | None:
+    if isinstance(value, datetime):
+        parsed = value
+    elif isinstance(value, str):
+        try:
+            parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        except ValueError:
+            return None
+    else:
+        return None
+    if parsed.tzinfo is None or parsed.utcoffset() is None:
+        return None
+    return parsed.astimezone(UTC)
 
 
 def _evidence_record(
@@ -162,6 +188,13 @@ def _evidence_record(
         body_complete=body_complete,
         provider_adapter_version=adapter_version,
         parser_version="jamp-provider-json-v1",
+        hash_schema_version="v2",
+        fetched_at=_capture_datetime(observation.get("fetched_at")),
+        provider_observed_at=_capture_datetime(observation.get("provider_observed_at")),
+        source_date=(
+            observation.get("source_date")
+            if isinstance(observation.get("source_date"), str) else None
+        ),
     )
 
 
@@ -301,7 +334,7 @@ def build_router(
             unit=payload.unit,
         )
         try:
-            arbitration = await arbitrate(claim, policy, provider_map)
+            outcomes = await fetch_provider_results(claim, policy, provider_map)
         except Exception:
             failure_response = await mark_failed()
             if failure_response is not None:
@@ -321,7 +354,7 @@ def build_router(
         }
         records: list[EvidenceRecord] = []
         try:
-            for outcome in arbitration.outcomes:
+            for outcome in outcomes:
                 source_payload: dict[str, Any] = {
                     "claim": claim_snapshot,
                     "source_status": outcome.status,
@@ -371,6 +404,17 @@ def build_router(
                 return failure_response
             return _ledger_error(exc)
 
+        try:
+            arbitration = arbitrate_from_evidence(claim, policy, outcomes, tuple(records))
+        except Exception:
+            failure_response = await mark_failed()
+            if failure_response is not None:
+                return failure_response
+            return JSONResponse(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                content={"error": "SOURCE_POLICY_ARBITRATION_FAILED"},
+            )
+
         verdict_record = VerdictRecord(
             verdict_id=str(uuid.uuid4()),
             claim_id=claim_id,
@@ -382,6 +426,7 @@ def build_router(
             canonicalization_version=CANONICALIZATION_VERSION,
             decided_at_utc=datetime.now(UTC),
             reason_codes=arbitration.reason_codes,
+            verification_mode=arbitration.verification_mode,
             explanation=(
                 f"Required-source arbitration returned {arbitration.verdict_status}; "
                 f"{len(arbitration.outcomes)} required source outcome(s) are linked "
@@ -425,6 +470,8 @@ def build_router(
             "arbitration": {
                 "verdict": arbitration.verdict_status,
                 "reason_codes": list(arbitration.reason_codes),
+                "verification_mode": arbitration.verification_mode,
+                "independent_cross_check": arbitration.independent_cross_check,
                 "reducer": arbitration.reducer,
                 "required_sources": [
                     outcome.source.provider_id for outcome in arbitration.outcomes
@@ -468,6 +515,7 @@ def build_router(
             "canonicalization_version": record.canonicalization_version,
             "decided_at_utc": record.decided_at_utc.isoformat(),
             "reason_codes": list(record.reason_codes),
+            "verification_mode": record.verification_mode,
             "explanation": record.explanation,
             "parent_hash": record.parent_hash,
         }
