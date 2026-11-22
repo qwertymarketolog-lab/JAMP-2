@@ -413,6 +413,11 @@ def build_router(
 
         try:
             arbitration = arbitrate_from_evidence(claim, policy, outcomes, tuple(records))
+        except IntegrityViolation as exc:
+            failure_response = await mark_failed()
+            if failure_response is not None:
+                return failure_response
+            return _ledger_error(exc)
         except Exception:
             failure_response = await mark_failed()
             if failure_response is not None:
