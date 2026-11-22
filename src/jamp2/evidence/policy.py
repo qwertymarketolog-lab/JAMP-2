@@ -10,6 +10,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Literal, Mapping
+
 from jamp2.evidence.reason_codes import (
     ALL_REQUIRED_SOURCES_UNAVAILABLE,
     ERR_INCOMPATIBLE_PROVENANCE,
