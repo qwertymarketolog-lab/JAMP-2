@@ -73,12 +73,18 @@ class EvidenceRecord:
         if self.hash_schema_version not in {"v1", "v2"}:
             raise ValueError("hash_schema_version must be v1 or v2")
         if self.hash_schema_version == "v1" and any(
-            value is not None for value in (self.fetched_at, self.provider_observed_at, self.source_date)
+            value is not None
+            for value in (self.fetched_at, self.provider_observed_at, self.source_date)
         ):
             raise ValueError("source metadata requires hash_schema_version v2")
-        for field_name, value in (("fetched_at", self.fetched_at), ("provider_observed_at", self.provider_observed_at)):
+        for field_name, value in (
+            ("fetched_at", self.fetched_at),
+            ("provider_observed_at", self.provider_observed_at),
+        ):
             if value is not None and (
-                not isinstance(value, datetime) or value.tzinfo is None or value.utcoffset() is None
+                not isinstance(value, datetime)
+                or value.tzinfo is None
+                or value.utcoffset() is None
             ):
                 raise ValueError(f"{field_name} must be timezone-aware or null")
         if self.source_date is not None and (
