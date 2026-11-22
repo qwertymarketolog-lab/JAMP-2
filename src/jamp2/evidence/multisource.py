@@ -89,7 +89,7 @@ class ArbitrationResult:
 
 
 def _numeric_value(details: dict[str, Any]) -> int | float | str | None:
-    value = details.get("observed_last")
+    value = details.get("observed_last", details.get("observed_value"))
     if isinstance(value, bool) or not isinstance(value, (int, float, str)):
         return None
     try:
