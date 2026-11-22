@@ -37,7 +37,9 @@ class InMemoryLedger:
         return persisted
 
     def get(self, evidence_id: str) -> EvidenceRecord | None:
-        """Return one record by its unique evidence identifier."""
+        """Return one record only when the complete in-memory chain verifies."""
+        if not self.verify_chain():
+            raise IntegrityViolation("evidence hash chain verification failed")
         for record in self._records:
             if record.evidence_id == evidence_id:
                 return record
