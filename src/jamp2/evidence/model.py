@@ -11,6 +11,14 @@ JSONValue: TypeAlias = (
 )
 
 
+class LedgerError(Exception):
+    """Base class for evidence ledger failures."""
+
+
+class IntegrityViolation(LedgerError):
+    """Raised when persisted evidence metadata or its integrity contract is invalid."""
+
+
 @dataclass(frozen=True, slots=True)
 class EvidenceRecord:
     """One immutable raw observation and its derived verification metadata."""
@@ -71,7 +79,7 @@ class EvidenceRecord:
         ):
             raise ValueError("captured_at_utc must be timezone-aware UTC")
         if self.hash_schema_version not in {"v1", "v2"}:
-            raise ValueError("hash_schema_version must be v1 or v2")
+            raise IntegrityViolation("unsupported evidence hash schema version")
         if self.hash_schema_version == "v1" and any(
             value is not None
             for value in (self.fetched_at, self.provider_observed_at, self.source_date)
