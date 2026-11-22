@@ -85,14 +85,14 @@ class EvidenceRecord:
             for value in (self.fetched_at, self.provider_observed_at, self.source_date)
         ):
             raise ValueError("source metadata requires hash_schema_version v2")
-        for field_name, value in (
+        for field_name, metadata_value in (
             ("fetched_at", self.fetched_at),
             ("provider_observed_at", self.provider_observed_at),
         ):
-            if value is not None and (
-                not isinstance(value, datetime)
-                or value.tzinfo is None
-                or value.utcoffset() is None
+            if metadata_value is not None and (
+                not isinstance(metadata_value, datetime)
+                or metadata_value.tzinfo is None
+                or metadata_value.utcoffset() is None
             ):
                 raise ValueError(f"{field_name} must be timezone-aware or null")
         if self.source_date is not None and (
