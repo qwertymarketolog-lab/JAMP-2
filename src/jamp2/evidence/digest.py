@@ -37,7 +37,6 @@ def compute_record_hash(record: EvidenceRecord) -> str:
     }
     if record.hash_schema_version == "v2":
         payload.update({
-            "hash_schema_version": "v2",
             "fetched_at": record.fetched_at.isoformat() if record.fetched_at else None,
             "provider_observed_at": (
                 record.provider_observed_at.isoformat() if record.provider_observed_at else None
