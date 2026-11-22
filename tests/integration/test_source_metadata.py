@@ -26,11 +26,13 @@ from jamp2.evidence.policy import SourcePolicyRecord
 from jamp2.providers.moex import _moex_capture_metadata
 
 
+
 def _claim(kind: str, identifier: str, unit: str) -> NormalizedClaim:
     return NormalizedClaim(
         text="current price claim", subject_kind=kind, subject_identifier=identifier,
         predicate="price", expected_value=100, unit=unit,
     )
+
 
 
 def _outcome(source: SourceSpec, identifier: str, *, quote: str,
@@ -55,6 +57,7 @@ def _outcome(source: SourceSpec, identifier: str, *, quote: str,
     return SourceOutcome(source, "E4_VERIFIED", details, [captured], observation)
 
 
+
 def _policy(source: SourceSpec, *, asset: str, identifier: str, quote: str,
             price_type: str, calendar_required: bool) -> MultiSourcePolicy:
     source_policy = SourcePolicyRecord(
@@ -69,6 +72,7 @@ def _policy(source: SourceSpec, *, asset: str, identifier: str, quote: str,
         max_time_skew_seconds=5, verification_mode="SINGLE_SOURCE",
     )
     return MultiSourcePolicy("offline-e2e", "v1", (source,), source_policy=source_policy)
+
 
 
 def test_moex_without_confirmed_calendar_is_ambiguous_and_blocked():
@@ -86,6 +90,7 @@ def test_moex_without_confirmed_calendar_is_ambiguous_and_blocked():
     assert result.reducer["status"] == "POLICY_GATE_BLOCKED"
 
 
+
 def test_fresh_coingecko_source_is_verified_without_network():
     source = SourceSpec("coingecko", "coingecko", "api.coingecko.com", "coingecko-adapter-v1")
     result = arbitrate_from_evidence(
@@ -97,6 +102,7 @@ def test_fresh_coingecko_source_is_verified_without_network():
     )
     assert result.verdict_status == "VERIFIED"
     assert result.verification_mode == "SINGLE_SOURCE"
+
 
 
 def test_stale_coingecko_source_is_ambiguous_not_inconclusive():
@@ -112,7 +118,9 @@ def test_stale_coingecko_source_is_ambiguous_not_inconclusive():
     assert result.verdict_status == "AMBIGUOUS"
     assert result.reason_codes
 
+
 DATABASE_URL = os.getenv("DATABASE_URL")
+
 
 
 def _connect_kwargs(url: URL, database: str) -> dict[str, object]:
@@ -161,6 +169,7 @@ def populated_migration_database(
                 await connection.close()
 
         asyncio.run(drop_database())
+
 
 
 @pytest.mark.skipif(
@@ -239,6 +248,7 @@ def test_migration_008_preserves_populated_evidence_and_verdict_ledgers(
     assert verdict == {"verification_mode": None, "record_hash": "b" * 64}
 
 
+
 def test_unknown_evidence_hash_schema_is_integrity_violation():
     with pytest.raises(IntegrityViolation, match="unsupported evidence hash schema"):
         EvidenceRecord(
@@ -249,6 +259,7 @@ def test_unknown_evidence_hash_schema_is_integrity_violation():
             verdict_status="CAPTURED", parent_hash=None,
             hash_schema_version="v3",
         )
+
 
 
 def test_v2_evidence_hash_binds_source_capture_metadata():
@@ -273,6 +284,7 @@ def test_v2_evidence_hash_binds_source_capture_metadata():
         source_date=record.source_date,
     )
     assert compute_record_hash(record) != compute_record_hash(changed)
+
 
 
 def test_moex_systime_is_optional_and_uses_moscow_timezone_when_full_timestamp():
