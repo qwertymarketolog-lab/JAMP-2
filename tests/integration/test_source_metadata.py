@@ -162,6 +162,52 @@ def test_fresh_coingecko_source_is_verified_without_network():
 
 
 
+def test_arbitration_refuses_empty_ledger_evidence():
+    source = SourceSpec("coingecko", "coingecko", "api.coingecko.com", "coingecko-adapter-v1")
+    claim = _claim("crypto_asset", "bitcoin", "USD")
+    outcome = _outcome(source, "bitcoin", quote="USD", price_type="SPOT", calendar=None)
+    with pytest.raises(IntegrityViolation, match="ledger records are required"):
+        arbitrate_from_evidence(
+            claim,
+            _policy(source, asset="crypto_asset", identifier="bitcoin", quote="USD",
+                    price_type="SPOT", calendar_required=False),
+            (outcome,),
+            (),
+        )
+
+
+def test_arbitration_rejects_tampered_record_hash():
+    source = SourceSpec("coingecko", "coingecko", "api.coingecko.com", "coingecko-adapter-v1")
+    claim = _claim("crypto_asset", "bitcoin", "USD")
+    outcome = _outcome(source, "bitcoin", quote="USD", price_type="SPOT", calendar=None)
+    valid_record = _evidence_records((outcome,), claim)[0]
+    tampered = replace(valid_record, parsed_value={"provider_result": {"observed_last": 101}})
+    with pytest.raises(IntegrityViolation, match="record_hash is missing or invalid"):
+        arbitrate_from_evidence(
+            claim,
+            _policy(source, asset="crypto_asset", identifier="bitcoin", quote="USD",
+                    price_type="SPOT", calendar_required=False),
+            (outcome,),
+            (tampered,),
+        )
+
+
+def test_arbitration_rejects_outcome_not_matching_ledger_payload():
+    source = SourceSpec("coingecko", "coingecko", "api.coingecko.com", "coingecko-adapter-v1")
+    claim = _claim("crypto_asset", "bitcoin", "USD")
+    outcome = _outcome(source, "bitcoin", quote="USD", price_type="SPOT", calendar=None)
+    records = _evidence_records((outcome,), claim)
+    changed = replace(outcome, details={**outcome.details, "observed_last": 101})
+    with pytest.raises(IntegrityViolation, match="does not match exactly one persisted"):
+        arbitrate_from_evidence(
+            claim,
+            _policy(source, asset="crypto_asset", identifier="bitcoin", quote="USD",
+                    price_type="SPOT", calendar_required=False),
+            (changed,),
+            records,
+        )
+
+
 def test_stale_coingecko_source_is_ambiguous_not_inconclusive():
     source = SourceSpec("coingecko", "coingecko", "api.coingecko.com", "coingecko-adapter-v1")
     claim = _claim("crypto_asset", "bitcoin", "USD")
