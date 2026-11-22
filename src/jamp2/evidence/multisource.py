@@ -208,6 +208,7 @@ def _parse_capture_time(value: object) -> datetime | None:
 
 
 def _verified_source_records(
+    claim: NormalizedClaim,
     outcomes: tuple[SourceOutcome, ...],
     evidence_records: Sequence[EvidenceRecord],
 ) -> dict[str, tuple[EvidenceRecord, ...]]:
@@ -228,9 +229,6 @@ def _verified_source_records(
             raise IntegrityViolation("evidence record_hash is missing or invalid")
         if not hmac.compare_digest(compute_sha256(record.raw_body_bytes), record.raw_sha256):
             raise IntegrityViolation("evidence raw_sha256 is invalid")
-        if not record.body_complete and record.verdict_status != "SOURCE_FAILURE":
-            # Incomplete source responses remain durable but are never eligible.
-            continue
     if len(claim_ids) != 1:
         raise IntegrityViolation("arbitration evidence must belong to exactly one claim")
 
@@ -292,6 +290,14 @@ def _verified_source_records(
                     and record.provider_observed_at == observed_at
                     and record.source_date == source_date
                     and isinstance(record.parsed_value, dict)
+                    and record.parsed_value.get("claim") == {
+                        "text": claim.text,
+                        "subject_kind": claim.subject_kind,
+                        "subject_identifier": claim.subject_identifier,
+                        "predicate": claim.predicate,
+                        "expected_value": claim.expected_value,
+                        "unit": claim.unit,
+                    }
                     and record.parsed_value.get("source_status") == outcome.status
                     and record.parsed_value.get("provider_result") == outcome.details
                 ]
@@ -312,6 +318,14 @@ def _verified_source_records(
                 and record.http_status is None
                 and record.provider_adapter_version == outcome.source.adapter_version
                 and isinstance(record.parsed_value, dict)
+                and record.parsed_value.get("claim") == {
+                    "text": claim.text,
+                    "subject_kind": claim.subject_kind,
+                    "subject_identifier": claim.subject_identifier,
+                    "predicate": claim.predicate,
+                    "expected_value": claim.expected_value,
+                    "unit": claim.unit,
+                }
                 and record.parsed_value.get("source_status") == outcome.status
                 and record.parsed_value.get("provider_result") == outcome.details
             ]
@@ -342,11 +356,24 @@ def arbitrate_from_evidence(
     actual_ids = tuple(outcome.source.provider_id for outcome in outcomes)
     if actual_ids != expected_ids:
         raise ValueError("outcomes must contain every required source in policy order")
-    records_by_source = _verified_source_records(outcomes, evidence_records)
+    records_by_source = _verified_source_records(claim, outcomes, evidence_records)
 
     source_policy = _source_policy(claim, policy)
     policy_inputs: list[SourceObservationInput] = []
     for outcome in outcomes:
+        if (
+            outcome.observation.source_id != outcome.source.provider_id
+            or outcome.observation.fact_key
+            != f"{claim.subject_kind}:{claim.subject_identifier}:{claim.predicate}"
+            or outcome.observation.unit != claim.unit
+        ):
+            raise IntegrityViolation("reducer observation identity does not match the claim")
+        expected_value = _numeric_value(outcome.details)
+        if outcome.observation.usable and (
+            expected_value is None
+            or float(outcome.observation.value) != float(expected_value)
+        ):
+            raise IntegrityViolation("reducer observation value does not match ledger details")
         source_records = records_by_source[outcome.source.provider_id]
         latest = source_records[-1]
         identifiers = outcome.details.get("source_identifiers", ())
