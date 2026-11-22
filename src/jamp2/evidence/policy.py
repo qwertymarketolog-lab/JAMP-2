@@ -7,9 +7,21 @@ reducer; it never upgrades missing source metadata into evidence.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from typing import Literal
+from typing import Literal, Mapping
+from jamp2.evidence.reason_codes import (
+    ALL_REQUIRED_SOURCES_UNAVAILABLE,
+    ERR_INCOMPATIBLE_PROVENANCE,
+    ERR_QUORUM_NOT_MET,
+    ERR_TEMPORAL_SKEW_EXCEEDED,
+    SOURCE_AGE_OUT_OF_POLICY,
+    SOURCE_FAILED,
+    SOURCE_IDENTITY_OR_QUOTE_MISMATCH,
+    SOURCE_MARKET_CALENDAR_UNCONFIRMED,
+    SOURCE_TIMESTAMP_OR_BODY_INCOMPLETE,
+    SOURCE_TIME_IN_FUTURE,
+)
 
 VerificationMode = Literal["SINGLE_SOURCE", "MULTI_SOURCE"]
 ObservationStatus = Literal["VALID", "EXPIRED", "INCOMPLETE", "FAILED"]
@@ -108,6 +120,7 @@ class SourcePolicyRecord:
     timeout_seconds: float = 3.0
     verification_mode: VerificationMode = "MULTI_SOURCE"
     provenance: tuple[SourceProvenance, ...] = ()
+    max_age_by_source: Mapping[str, int] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         for name in (
@@ -141,6 +154,14 @@ class SourcePolicyRecord:
             raise ValueError("EXACT_V1 does not accept a tolerance")
         if self.max_age_seconds <= 0 or self.max_time_skew_seconds < 0:
             raise ValueError("invalid temporal limits")
+        if any(
+            not isinstance(provider, str) or not provider.strip()
+            or isinstance(seconds, bool) or not isinstance(seconds, int) or seconds <= 0
+            for provider, seconds in self.max_age_by_source.items()
+        ):
+            raise ValueError("max_age_by_source values must be positive integer seconds")
+        if any(provider not in self.required_sources for provider in self.max_age_by_source):
+            raise ValueError("max_age_by_source contains a non-required source")
         if self.timeout_seconds <= 0:
             raise ValueError("timeout_seconds must be positive")
         provenance_ids = [item.provider_id for item in self.provenance]
@@ -202,7 +223,7 @@ def evaluate_source_policy(
         item = by_id.get(provider_id)
         if item is None or not item.request_succeeded:
             eligibility.append(
-                SourceEligibility(provider_id, "FAILED", None, current, "SOURCE_FAILED")
+                SourceEligibility(provider_id, "FAILED", None, current, SOURCE_FAILED)
             )
             continue
         try:
@@ -217,7 +238,7 @@ def evaluate_source_policy(
                     "INCOMPLETE",
                     observed_at,
                     fetched_at or current,
-                    "SOURCE_TIMESTAMP_OR_BODY_INCOMPLETE",
+                    SOURCE_TIMESTAMP_OR_BODY_INCOMPLETE,
                 )
             )
             continue
@@ -235,7 +256,7 @@ def evaluate_source_policy(
                     "INCOMPLETE",
                     observed_at,
                     fetched_at,
-                    "SOURCE_IDENTITY_OR_QUOTE_MISMATCH",
+                    SOURCE_IDENTITY_OR_QUOTE_MISMATCH,
                 )
             )
             continue
@@ -246,22 +267,23 @@ def evaluate_source_policy(
                     "INCOMPLETE",
                     observed_at,
                     fetched_at,
-                    "SOURCE_MARKET_CALENDAR_UNCONFIRMED",
+                    SOURCE_MARKET_CALENDAR_UNCONFIRMED,
                 )
             )
             continue
+        age_limit = policy.max_age_by_source.get(provider_id, policy.max_age_seconds)
         age = (current - observed_at).total_seconds()
-        if age < 0 or age > policy.max_age_seconds:
+        if age < 0 or age > age_limit:
             eligibility.append(
                 SourceEligibility(
-                    provider_id, "EXPIRED", observed_at, fetched_at, "SOURCE_AGE_OUT_OF_POLICY"
+                    provider_id, "EXPIRED", observed_at, fetched_at, SOURCE_AGE_OUT_OF_POLICY
                 )
             )
             continue
         if (fetched_at - observed_at).total_seconds() < 0:
             eligibility.append(
                 SourceEligibility(
-                    provider_id, "EXPIRED", observed_at, fetched_at, "SOURCE_TIME_IN_FUTURE"
+                    provider_id, "EXPIRED", observed_at, fetched_at, SOURCE_TIME_IN_FUTURE
                 )
             )
             continue
@@ -283,9 +305,8 @@ def evaluate_source_policy(
                 and provenance_is_independent(provenances)
             )
             if not independent:
-                reasons.append("ERR_INCOMPATIBLE_PROVENANCE")
-    else:
-        reasons.append("ERR_SINGLE_SOURCE_FORCED")
+                reasons.append(ERR_INCOMPATIBLE_PROVENANCE)
+    # SINGLE_SOURCE is an explicit policy mode, not a forced-error condition.
 
     valid_times = [
         item.provider_observed_at for item in valid if item.provider_observed_at is not None
@@ -293,7 +314,7 @@ def evaluate_source_policy(
     if len(valid_times) >= 2:
         skew = (max(valid_times) - min(valid_times)).total_seconds()
         if skew > policy.max_time_skew_seconds:
-            reasons.append("ERR_TEMPORAL_SKEW_EXCEEDED")
+            reasons.append(ERR_TEMPORAL_SKEW_EXCEEDED)
             eligibility = [
                 SourceEligibility(
                     item.provider_id,
@@ -313,13 +334,13 @@ def evaluate_source_policy(
 
     if all(item == "FAILED" for item in statuses):
         verdict = "INCONCLUSIVE"
-        reasons.append("ALL_REQUIRED_SOURCES_UNAVAILABLE")
+        reasons.append(ALL_REQUIRED_SOURCES_UNAVAILABLE)
     elif any(item != "VALID" for item in statuses):
         verdict = "AMBIGUOUS"
-        reasons.append("ERR_QUORUM_NOT_MET")
+        reasons.append(ERR_QUORUM_NOT_MET)
     elif policy.verification_mode == "MULTI_SOURCE" and not independent:
         verdict = "AMBIGUOUS"
-        reasons.append("ERR_QUORUM_NOT_MET")
+        reasons.append(ERR_QUORUM_NOT_MET)
     else:
         verdict = None
 
