@@ -157,6 +157,7 @@ def _to_record(row: EvidenceRow) -> EvidenceRecord:
         fetched_at=row.fetched_at,
         provider_observed_at=row.provider_observed_at,
         source_date=row.source_date,
+        record_hash=row.record_hash,
     )
 
 
@@ -242,7 +243,7 @@ class PostgresLedger:
                         record_hash=record_hash,
                     )
                 )
-                return linked_record
+                return replace(linked_record, record_hash=record_hash)
         except (DuplicateEvidence, IntegrityViolation):
             raise
         except SQLAlchemyError as exc:
