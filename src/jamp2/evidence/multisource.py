@@ -17,6 +17,7 @@ from jamp2.domain.claim import NormalizedClaim
 from jamp2.evidence.conflict import SourceObservation, detect_conflicts
 from jamp2.evidence.digest import compute_record_hash, compute_sha256
 from jamp2.evidence.model import EvidenceRecord, IntegrityViolation
+from jamp2.evidence.reason_codes import EVIDENCE_LEDGER_REQUIRED
 from jamp2.evidence.policy import (
     SourceObservationInput,
     SourcePolicyRecord,
@@ -499,5 +500,5 @@ async def arbitrate(
         "INCONCLUSIVE",
         {"status": "POLICY_GATE_BLOCKED", "usable_observation_count": 0},
         outcomes,
-        ("EVIDENCE_LEDGER_REQUIRED",),
+        (EVIDENCE_LEDGER_REQUIRED,),
     )
