@@ -292,7 +292,11 @@ def evaluate_source_policy(
         eligibility.append(SourceEligibility(provider_id, "VALID", observed_at, fetched_at))
 
     statuses = [item.observation_status for item in eligibility]
-    reasons: list[str] = []
+    reasons: list[str] = list(
+        dict.fromkeys(
+            item.reason_code for item in eligibility if item.reason_code is not None
+        )
+    )
     valid = [item for item in eligibility if item.observation_status == "VALID"]
     independent = False
     if policy.verification_mode == "MULTI_SOURCE":
