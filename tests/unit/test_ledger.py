@@ -98,13 +98,13 @@ def test_tampering_with_raw_body_is_detected() -> None:
 def test_duplicate_evidence_id_is_rejected_without_overwrite() -> None:
     ledger = InMemoryLedger()
     original = make_record("evidence-1")
-    ledger.append(original)
+    persisted = ledger.append(original)
 
     with pytest.raises(ValueError, match="Duplicate evidence_id"):
         ledger.append(make_record("evidence-1", raw_body_bytes=b'{"price":200}'))
 
-    assert ledger.get("evidence-1") == original
-    assert ledger.list_by_claim("claim-1") == [original]
+    assert ledger.get("evidence-1") == persisted
+    assert ledger.list_by_claim("claim-1") == [persisted]
     assert ledger.verify_chain()
 
 
