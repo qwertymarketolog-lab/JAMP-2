@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
+
 from jamp2.evidence.digest import compute_record_hash, compute_sha256
 from jamp2.evidence.model import EvidenceRecord, IntegrityViolation
 
@@ -24,14 +26,7 @@ class InMemoryLedger:
         )
         if record.parent_hash != expected_parent:
             raise ValueError("parent_hash does not match the current ledger tip")
-        persisted = EvidenceRecord(
-            **{
-                field: getattr(record, field)
-                for field in record.__dataclass_fields__
-                if field != "record_hash"
-            },
-            record_hash=compute_record_hash(record),
-        )
+        persisted = replace(record, record_hash=compute_record_hash(record))
         self._records.append(persisted)
         self._evidence_ids.add(record.evidence_id)
         return persisted
