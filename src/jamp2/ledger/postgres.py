@@ -88,7 +88,9 @@ class EvidenceRow(Base):
     parser_version: Mapped[str] = mapped_column(String(64))
     hash_schema_version: Mapped[str] = mapped_column(String(8), server_default="v1")
     fetched_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
-    provider_observed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    provider_observed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     source_date: Mapped[str | None] = mapped_column(String(16), nullable=True)
     record_hash: Mapped[str] = mapped_column(String(64))
 
