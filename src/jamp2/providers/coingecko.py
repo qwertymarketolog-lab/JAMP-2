@@ -80,18 +80,36 @@ def _get_json(
                 "sha256_body": hashlib.sha256(body).hexdigest(),
             })
         raise
+    capture = None
     if raw_evidence is not None:
-        raw_evidence.append({
-            "source": "coingecko",
-            "url": url,
-            "status_code": status_code,
-            "body_complete": True,
+        capture = {
+            "source": "coingecko", "url": url, "status_code": status_code,
+            "fetched_at": datetime.now(UTC).isoformat(), "body_complete": True,
             "raw_body_base64": base64.b64encode(body).decode("ascii"),
             "sha256_body": hashlib.sha256(body).hexdigest(),
-        })
+        }
+        raw_evidence.append(capture)
     payload = json.loads(body.decode("utf-8"))
     if not isinstance(payload, dict):
         raise ValueError("CoinGecko response must be a JSON object")
+    if capture is not None:
+        candidates = [payload, *(value for value in payload.values() if isinstance(value, dict))]
+        timestamp = next(
+            (item.get("last_updated_at") for item in candidates
+             if item.get("last_updated_at") is not None),
+            None,
+        )
+        try:
+            if isinstance(timestamp, (int, float)) and not isinstance(timestamp, bool):
+                capture["provider_observed_at"] = datetime.fromtimestamp(
+                    timestamp, UTC
+                ).isoformat()
+            elif isinstance(timestamp, str):
+                observed = datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
+                if observed.tzinfo is not None and observed.utcoffset() is not None:
+                    capture["provider_observed_at"] = observed.astimezone(UTC).isoformat()
+        except (ValueError, OverflowError, OSError):
+            pass
     if raw_evidence is None:
         with _LOCK:
             _CACHE[url] = (time.monotonic(), payload)
@@ -183,7 +201,11 @@ def _verify_claim_with_coingecko(
         }
 
     if claim_type == "price":
-        params = urllib.parse.urlencode({"ids": normalized_id, "vs_currencies": "usd"})
+        params = urllib.parse.urlencode({
+            "ids": normalized_id,
+            "vs_currencies": "usd",
+            "include_last_updated_at": "true",
+        })
         url = f"{COINGECKO_BASE}/simple/price?{params}"
     else:
         url = _coin_url(normalized_id)
