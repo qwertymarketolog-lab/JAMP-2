@@ -41,7 +41,9 @@ class InMemoryLedger:
         return None
 
     def list_by_claim(self, claim_id: str) -> list[EvidenceRecord]:
-        """Return records for a claim in append order."""
+        """Return claim records only when the complete in-memory chain verifies."""
+        if not self.verify_chain():
+            raise IntegrityViolation("evidence hash chain verification failed")
         return [record for record in self._records if record.claim_id == claim_id]
 
     def verify_chain(self) -> bool:
