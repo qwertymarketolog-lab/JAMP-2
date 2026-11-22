@@ -152,7 +152,9 @@ async def fetch_provider_results(
     return tuple(
         await asyncio.gather(
             *(
-                _fetch_one(source, providers.get(source.provider_key), claim, policy.timeout_seconds)
+                _fetch_one(
+                    source, providers.get(source.provider_key), claim, policy.timeout_seconds
+                )
                 for source in policy.required_sources
             )
         )
