@@ -1,8 +1,10 @@
 """Offline source metadata and evidence-first arbitration integration checks."""
 import asyncio
+import base64
 import hashlib
 import os
 import uuid
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -37,7 +39,13 @@ def _claim(kind: str, identifier: str, unit: str) -> NormalizedClaim:
 def _outcome(source: SourceSpec, identifier: str, *, quote: str,
              price_type: str, calendar: bool | None, age_seconds: int = 5):
     fetched_at = datetime.now(UTC)
+    raw = b'{"price":100}'
     captured = {
+        "source": source.provider_id,
+        "url": f"https://{source.allowed_host}/price",
+        "status_code": 200,
+        "raw_body_base64": base64.b64encode(raw).decode("ascii"),
+        "sha256_body": compute_sha256(raw),
         "fetched_at": fetched_at.isoformat(),
         "provider_observed_at": (
             fetched_at - timedelta(seconds=age_seconds)
@@ -55,6 +63,42 @@ def _outcome(source: SourceSpec, identifier: str, *, quote: str,
     )
     return SourceOutcome(source, "E4_VERIFIED", details, [captured], observation)
 
+
+def _evidence_records(outcomes: tuple[SourceOutcome, ...]) -> tuple[EvidenceRecord, ...]:
+    records: list[EvidenceRecord] = []
+    for outcome in outcomes:
+        for capture in outcome.raw_evidence:
+            raw = base64.b64decode(capture["raw_body_base64"], validate=True)
+            fetched_at = datetime.fromisoformat(capture["fetched_at"])
+            observed_at = datetime.fromisoformat(capture["provider_observed_at"])
+            record = EvidenceRecord(
+                evidence_id=f"evidence-{outcome.source.provider_id}",
+                claim_id="claim-offline",
+                provider=outcome.source.provider_id,
+                url=capture["url"],
+                http_status=capture["status_code"],
+                raw_body_bytes=raw,
+                raw_sha256=compute_sha256(raw),
+                captured_at_utc=fetched_at,
+                parsed_value={
+                    "source_status": outcome.status,
+                    "provider_result": outcome.details,
+                },
+                verdict_status=(
+                    "SOURCE_OBSERVATION_CAPTURED"
+                    if outcome.observation.usable
+                    else "SOURCE_RESPONSE_CAPTURED"
+                ),
+                parent_hash=None,
+                body_complete=True,
+                provider_adapter_version=outcome.source.adapter_version,
+                parser_version="jamp-provider-json-v1",
+                hash_schema_version="v2",
+                fetched_at=fetched_at,
+                provider_observed_at=observed_at,
+            )
+            records.append(replace(record, record_hash=compute_record_hash(record)))
+    return tuple(records)
 
 
 def _policy(source: SourceSpec, *, asset: str, identifier: str, quote: str,
@@ -76,12 +120,13 @@ def _policy(source: SourceSpec, *, asset: str, identifier: str, quote: str,
 
 def test_moex_without_confirmed_calendar_is_ambiguous_and_blocked():
     source = SourceSpec("moex", "moex.iss", "iss.moex.com", "moex-iss-adapter-v1")
+    outcome = _outcome(source, "SBER", quote="RUB", price_type="LAST_DEAL", calendar=None)
     result = arbitrate_from_evidence(
         _claim("equity_security", "SBER", "RUB"),
         _policy(source, asset="equity_security", identifier="SBER", quote="RUB",
                 price_type="LAST_DEAL", calendar_required=True),
-        (_outcome(source, "SBER", quote="RUB", price_type="LAST_DEAL", calendar=None),),
-        (),
+        (outcome,),
+        _evidence_records((outcome,)),
     )
     assert result.verdict_status == "AMBIGUOUS"
     assert "SOURCE_MARKET_CALENDAR_UNCONFIRMED" in result.reason_codes
@@ -92,12 +137,13 @@ def test_moex_without_confirmed_calendar_is_ambiguous_and_blocked():
 
 def test_fresh_coingecko_source_is_verified_without_network():
     source = SourceSpec("coingecko", "coingecko", "api.coingecko.com", "coingecko-adapter-v1")
+    outcome = _outcome(source, "bitcoin", quote="USD", price_type="SPOT", calendar=None)
     result = arbitrate_from_evidence(
         _claim("crypto_asset", "bitcoin", "USD"),
         _policy(source, asset="crypto_asset", identifier="bitcoin", quote="USD",
                 price_type="SPOT", calendar_required=False),
-        (_outcome(source, "bitcoin", quote="USD", price_type="SPOT", calendar=None),),
-        (),
+        (outcome,),
+        _evidence_records((outcome,)),
     )
     assert result.verdict_status == "VERIFIED"
     assert result.verification_mode == "SINGLE_SOURCE"
@@ -106,13 +152,15 @@ def test_fresh_coingecko_source_is_verified_without_network():
 
 def test_stale_coingecko_source_is_ambiguous_not_inconclusive():
     source = SourceSpec("coingecko", "coingecko", "api.coingecko.com", "coingecko-adapter-v1")
+    outcome = _outcome(
+        source, "bitcoin", quote="USD", price_type="SPOT", calendar=None, age_seconds=301
+    )
     result = arbitrate_from_evidence(
         _claim("crypto_asset", "bitcoin", "USD"),
         _policy(source, asset="crypto_asset", identifier="bitcoin", quote="USD",
                 price_type="SPOT", calendar_required=False),
-        (_outcome(source, "bitcoin", quote="USD", price_type="SPOT",
-                  calendar=None, age_seconds=301),),
-        (),
+        (outcome,),
+        _evidence_records((outcome,)),
     )
     assert result.verdict_status == "AMBIGUOUS"
     assert result.reason_codes
