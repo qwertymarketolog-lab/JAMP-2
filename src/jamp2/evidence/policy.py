@@ -7,9 +7,10 @@ reducer; it never upgrades missing source metadata into evidence.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from typing import Literal, Mapping
+from typing import Literal
 
 from jamp2.evidence.reason_codes import (
     ALL_REQUIRED_SOURCES_UNAVAILABLE,
@@ -20,8 +21,8 @@ from jamp2.evidence.reason_codes import (
     SOURCE_FAILED,
     SOURCE_IDENTITY_OR_QUOTE_MISMATCH,
     SOURCE_MARKET_CALENDAR_UNCONFIRMED,
-    SOURCE_TIMESTAMP_OR_BODY_INCOMPLETE,
     SOURCE_TIME_IN_FUTURE,
+    SOURCE_TIMESTAMP_OR_BODY_INCOMPLETE,
 )
 
 VerificationMode = Literal["SINGLE_SOURCE", "MULTI_SOURCE"]
