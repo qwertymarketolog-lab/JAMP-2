@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import hashlib
+from dataclasses import replace
 import time
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -39,14 +40,7 @@ class MemoryLedger:
         self.idempotency: dict[str, dict[str, Any]] = {}
 
     async def append(self, record: EvidenceRecord) -> EvidenceRecord:
-        persisted = EvidenceRecord(
-            **{
-                field: getattr(record, field)
-                for field in record.__dataclass_fields__
-                if field != "record_hash"
-            },
-            record_hash=compute_record_hash(record),
-        )
+        persisted = replace(record, record_hash=compute_record_hash(record))
         self.records.append(persisted)
         return persisted
 
