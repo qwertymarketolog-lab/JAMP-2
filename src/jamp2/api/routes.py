@@ -398,14 +398,13 @@ def build_router(
                     )
                     records.append(await ledger.append(record))
 
-            # Read each append back through the ledger's chain-verifying API.
-            verified_records: list[EvidenceRecord] = []
-            for appended in records:
-                persisted = await ledger.get(appended.evidence_id)
-                if persisted is None:
-                    raise IntegrityViolation("appended evidence is not readable from ledger")
-                verified_records.append(persisted)
-            records = verified_records
+            # Read the claim's complete evidence set through the chain-verifying API.
+            persisted_records = await ledger.list_by_claim(claim_id)
+            if {item.evidence_id for item in persisted_records} != {
+                item.evidence_id for item in records
+            }:
+                raise IntegrityViolation("appended evidence set does not match the ledger")
+            records = persisted_records
         except (DuplicateEvidence, IntegrityViolation, LedgerUnavailable) as exc:
             failure_response = await mark_failed()
             if failure_response is not None:
