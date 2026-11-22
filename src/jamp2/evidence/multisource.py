@@ -4,9 +4,10 @@ from __future__ import annotations
 import asyncio
 import math
 import warnings
+from collections.abc import Sequence
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
-from typing import Any, Sequence
+from typing import Any
 
 from jamp2.domain.claim import NormalizedClaim
 from jamp2.evidence.conflict import SourceObservation, detect_conflicts
