@@ -340,7 +340,9 @@ def evaluate_source_policy(
 
     if all(item == "FAILED" for item in statuses):
         verdict = "INCONCLUSIVE"
-        reasons.append(ALL_REQUIRED_SOURCES_UNAVAILABLE)
+        # The aggregate failure is the primary decision; retain each source's
+        # concrete failure reason after it for diagnosis.
+        reasons.insert(0, ALL_REQUIRED_SOURCES_UNAVAILABLE)
     elif any(item != "VALID" for item in statuses):
         verdict = "AMBIGUOUS"
         reasons.append(ERR_QUORUM_NOT_MET)
