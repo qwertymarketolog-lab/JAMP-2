@@ -175,9 +175,9 @@ def _source_policy(claim: NormalizedClaim, policy: MultiSourcePolicy) -> SourceP
         max_age_seconds=60,
         max_time_skew_seconds=5,
         max_age_by_source={
-            source.provider_id: ttl
+            source.provider_id: {"moex.iss": 1200, "coingecko": 300}[source.provider_id]
             for source in policy.required_sources
-            if (ttl := {"moex.iss": 1200, "coingecko": 300}.get(source.provider_id)) is not None
+            if source.provider_id in {"moex.iss", "coingecko"}
         },
         timeout_seconds=policy.timeout_seconds,
         verification_mode=(
