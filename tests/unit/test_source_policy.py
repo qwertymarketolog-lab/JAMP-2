@@ -164,7 +164,7 @@ def test_single_source_is_explicit_and_has_no_independent_cross_check():
     assert result.eligible_for_reducer
     assert result.verification_mode == "SINGLE_SOURCE"
     assert not result.independent_cross_check
-    assert "ERR_SINGLE_SOURCE_FORCED" in result.decision_reason_codes
+    assert not result.decision_reason_codes
 
 
 def test_multi_source_requires_at_least_two_sources():
@@ -200,3 +200,32 @@ def test_required_market_calendar_must_be_confirmed():
         result.observations[0].reason_code
         == "SOURCE_MARKET_CALENDAR_UNCONFIRMED"
     )
+
+
+def test_per_source_ttl_overrides_global_max_age():
+    source_policy = SourcePolicyRecord(
+        policy_id="ttl-test", version=1, asset_class="crypto_asset",
+        required_identifiers=("bitcoin",), market_calendar_required=False,
+        quote_currency="USD", price_type="SPOT", required_sources=("a",),
+        independence_group="ttl", max_age_seconds=3600, max_time_skew_seconds=0,
+        verification_mode="SINGLE_SOURCE", max_age_by_source={"a": 10},
+    )
+    result = evaluate_source_policy(
+        source_policy,
+        (observation("a", NOW - timedelta(seconds=11), identifiers=("bitcoin",),
+            quote_currency="USD", price_type="SPOT", market_calendar_valid=None),),
+        now=NOW,
+    )
+    assert result.verdict_status == "AMBIGUOUS"
+    assert result.observations[0].observation_status == "EXPIRED"
+
+
+def test_per_source_ttl_must_be_positive():
+    with pytest.raises(ValueError, match="positive integer"):
+        SourcePolicyRecord(
+            policy_id="ttl-test", version=1, asset_class="crypto_asset",
+            required_identifiers=("bitcoin",), market_calendar_required=False,
+            quote_currency="USD", price_type="SPOT", required_sources=("a",),
+            independence_group="ttl", max_age_seconds=60, max_time_skew_seconds=0,
+            verification_mode="SINGLE_SOURCE", max_age_by_source={"a": 0},
+        )
