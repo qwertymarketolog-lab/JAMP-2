@@ -57,9 +57,13 @@ def _outcome(source: SourceSpec, identifier: str, *, quote: str,
         "quote_currency": quote, "price_type": price_type,
         "market_calendar_valid": calendar,
     }
+    asset_kind = "equity_security" if source.provider_id == "moex.iss" else "crypto_asset"
     observation = SourceObservation(
-        source_id=source.provider_id, fact_key=f"{'equity_security' if source.provider_id == 'moex.iss' else 'crypto_asset'}:{identifier}:price",
-        value=100, unit=quote, usable=True,
+        source_id=source.provider_id,
+        fact_key=f"{asset_kind}:{identifier}:price",
+        value=100,
+        unit=quote,
+        usable=True,
     )
     return SourceOutcome(source, "E4_VERIFIED", details, [captured], observation)
 

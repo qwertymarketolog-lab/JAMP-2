@@ -17,12 +17,12 @@ from jamp2.domain.claim import NormalizedClaim
 from jamp2.evidence.conflict import SourceObservation, detect_conflicts
 from jamp2.evidence.digest import compute_record_hash, compute_sha256
 from jamp2.evidence.model import EvidenceRecord, IntegrityViolation
-from jamp2.evidence.reason_codes import EVIDENCE_LEDGER_REQUIRED
 from jamp2.evidence.policy import (
     SourceObservationInput,
     SourcePolicyRecord,
     evaluate_source_policy,
 )
+from jamp2.evidence.reason_codes import EVIDENCE_LEDGER_REQUIRED
 from jamp2.providers.base import Provider, ProviderResult
 
 
@@ -264,8 +264,13 @@ def _verified_source_records(
                 if not hmac.compare_digest(actual_digest, digest):
                     raise IntegrityViolation("provider capture raw digest mismatch")
                 parsed_url = urlsplit(url)
-                if parsed_url.scheme != "https" or parsed_url.hostname != outcome.source.allowed_host:
-                    raise IntegrityViolation("provider capture URL is outside the fixed source host")
+                if (
+                    parsed_url.scheme != "https"
+                    or parsed_url.hostname != outcome.source.allowed_host
+                ):
+                    raise IntegrityViolation(
+                        "provider capture URL is outside the fixed source host"
+                    )
                 fetched_at = _parse_capture_time(capture.get("fetched_at"))
                 observed_at = _parse_capture_time(capture.get("provider_observed_at"))
                 source_date = capture.get("source_date")
