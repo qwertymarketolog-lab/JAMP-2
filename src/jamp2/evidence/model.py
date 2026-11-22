@@ -43,6 +43,8 @@ class EvidenceRecord:
     fetched_at: datetime | None = None
     provider_observed_at: datetime | None = None
     source_date: str | None = None
+    # Populated only by a ledger append/read; excluded from the record hash payload.
+    record_hash: str | None = None
 
     def __post_init__(self) -> None:
         required_strings = (
