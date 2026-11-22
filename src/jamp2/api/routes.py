@@ -397,6 +397,15 @@ def build_router(
                         parser_version="jamp-provider-json-v1",
                     )
                     records.append(await ledger.append(record))
+
+            # Read each append back through the ledger's chain-verifying API.
+            verified_records: list[EvidenceRecord] = []
+            for appended in records:
+                persisted = await ledger.get(appended.evidence_id)
+                if persisted is None:
+                    raise IntegrityViolation("appended evidence is not readable from ledger")
+                verified_records.append(persisted)
+            records = verified_records
         except (DuplicateEvidence, IntegrityViolation, LedgerUnavailable) as exc:
             failure_response = await mark_failed()
             if failure_response is not None:
