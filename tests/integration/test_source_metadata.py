@@ -17,7 +17,11 @@ from jamp2.evidence.conflict import SourceObservation
 from jamp2.evidence.multisource import (
     MultiSourcePolicy, SourceOutcome, SourceSpec, arbitrate_from_evidence,
 )
+from jamp2.evidence.model import EvidenceRecord, IntegrityViolation
+from jamp2.evidence.digest import compute_record_hash, compute_sha256
 from jamp2.evidence.policy import SourcePolicyRecord
+from jamp2.providers.moex import _moex_capture_metadata
+
 
 def _claim(kind: str, identifier: str, unit: str) -> NormalizedClaim:
     return NormalizedClaim(
@@ -104,9 +108,6 @@ def test_stale_coingecko_source_is_ambiguous_not_inconclusive():
     assert result.reason_codes
 
 DATABASE_URL = os.getenv("DATABASE_URL")
-pytestmark = pytest.mark.skipif(
-    not DATABASE_URL, reason="DATABASE_URL is required for PostgreSQL migration tests"
-)
 
 
 def _connect_kwargs(url: URL, database: str) -> dict[str, object]:
@@ -157,6 +158,9 @@ def populated_migration_database(
         asyncio.run(drop_database())
 
 
+@pytest.mark.skipif(
+    not DATABASE_URL, reason="DATABASE_URL is required for PostgreSQL migration tests"
+)
 def test_migration_008_preserves_populated_evidence_and_verdict_ledgers(
     populated_migration_database,
 ) -> None:
@@ -228,3 +232,58 @@ def test_migration_008_preserves_populated_evidence_and_verdict_ledgers(
         "record_hash": "a" * 64,
     }
     assert verdict == {"verification_mode": None, "record_hash": "b" * 64}
+
+
+def test_unknown_evidence_hash_schema_is_integrity_violation():
+    with pytest.raises(IntegrityViolation, match="unsupported evidence hash schema"):
+        EvidenceRecord(
+            evidence_id="e-1", claim_id="c-1", provider="p",
+            url="https://example.test/e", http_status=200,
+            raw_body_bytes=b"{}", raw_sha256=compute_sha256(b"{}"),
+            captured_at_utc=datetime.now(UTC), parsed_value={},
+            verdict_status="CAPTURED", parent_hash=None,
+            hash_schema_version="v3",
+        )
+
+
+def test_v2_evidence_hash_binds_source_capture_metadata():
+    captured = datetime.now(UTC)
+    record = EvidenceRecord(
+        evidence_id="e-v2", claim_id="c-v2", provider="moex.iss",
+        url="https://iss.moex.com/iss/e", http_status=200,
+        raw_body_bytes=b"{}", raw_sha256=compute_sha256(b"{}"),
+        captured_at_utc=captured, parsed_value={}, verdict_status="CAPTURED",
+        parent_hash=None, hash_schema_version="v2",
+        fetched_at=captured, provider_observed_at=captured,
+        source_date="2026-11-22",
+    )
+    changed = EvidenceRecord(
+        evidence_id=record.evidence_id, claim_id=record.claim_id,
+        provider=record.provider, url=record.url, http_status=record.http_status,
+        raw_body_bytes=record.raw_body_bytes, raw_sha256=record.raw_sha256,
+        captured_at_utc=record.captured_at_utc, parsed_value=record.parsed_value,
+        verdict_status=record.verdict_status, parent_hash=record.parent_hash,
+        hash_schema_version="v2", fetched_at=record.fetched_at,
+        provider_observed_at=captured + timedelta(seconds=1),
+        source_date=record.source_date,
+    )
+    assert compute_record_hash(record) != compute_record_hash(changed)
+
+
+def test_moex_systime_is_optional_and_uses_moscow_timezone_when_full_timestamp():
+    no_time = _moex_capture_metadata({
+        "marketdata": {
+            "columns": ["TRADEDATE", "SYSTIME"],
+            "data": [["2026-11-22", None]],
+        }
+    })
+    assert no_time == {"source_date": "2026-11-22"}
+
+    with_time = _moex_capture_metadata({
+        "marketdata": {
+            "columns": ["TRADEDATE", "SYSTIME"],
+            "data": [["2026-11-22", "2026-11-22T13:00:00"]],
+        }
+    })
+    assert with_time["source_date"] == "2026-11-22"
+    assert with_time["provider_observed_at"] == "2026-11-22T10:00:00+00:00"
