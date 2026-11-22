@@ -86,6 +86,10 @@ class EvidenceRow(Base):
     body_complete: Mapped[bool] = mapped_column(Boolean)
     provider_adapter_version: Mapped[str] = mapped_column(String(64))
     parser_version: Mapped[str] = mapped_column(String(64))
+    hash_schema_version: Mapped[str] = mapped_column(String(8), server_default="v1")
+    fetched_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    provider_observed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    source_date: Mapped[str | None] = mapped_column(String(16), nullable=True)
     record_hash: Mapped[str] = mapped_column(String(64))
 
 
@@ -106,6 +110,7 @@ class VerdictRow(Base):
     decided_at_utc: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     reason_codes: Mapped[list[str]] = mapped_column(JSONB)
     explanation: Mapped[str] = mapped_column(Text)
+    verification_mode: Mapped[str | None] = mapped_column(String(16), nullable=True)
     parent_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
     record_hash: Mapped[str] = mapped_column(String(64))
 
@@ -154,6 +159,10 @@ def _to_record(row: EvidenceRow) -> EvidenceRecord:
         body_complete=row.body_complete,
         provider_adapter_version=row.provider_adapter_version,
         parser_version=row.parser_version,
+        hash_schema_version=row.hash_schema_version,
+        fetched_at=row.fetched_at,
+        provider_observed_at=row.provider_observed_at,
+        source_date=row.source_date,
     )
 
 
@@ -171,6 +180,7 @@ def _to_verdict(row: VerdictRow) -> VerdictRecord:
         reason_codes=tuple(row.reason_codes),
         explanation=row.explanation,
         parent_hash=row.parent_hash,
+        verification_mode=row.verification_mode,
     )
 
 
@@ -231,6 +241,10 @@ class PostgresLedger:
                         body_complete=linked_record.body_complete,
                         provider_adapter_version=linked_record.provider_adapter_version,
                         parser_version=linked_record.parser_version,
+                        hash_schema_version=linked_record.hash_schema_version,
+                        fetched_at=linked_record.fetched_at,
+                        provider_observed_at=linked_record.provider_observed_at,
+                        source_date=linked_record.source_date,
                         record_hash=record_hash,
                     )
                 )
@@ -291,6 +305,7 @@ class PostgresLedger:
                         decided_at_utc=linked_record.decided_at_utc,
                         reason_codes=list(linked_record.reason_codes),
                         explanation=linked_record.explanation,
+                        verification_mode=linked_record.verification_mode,
                         parent_hash=linked_record.parent_hash,
                         record_hash=record_hash,
                     )
