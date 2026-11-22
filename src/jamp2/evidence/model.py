@@ -105,3 +105,9 @@ class EvidenceRecord:
             not isinstance(self.parent_hash, str) or not self.parent_hash
         ):
             raise ValueError("parent_hash must be a non-empty hash or null")
+        if self.record_hash is not None and (
+            not isinstance(self.record_hash, str)
+            or len(self.record_hash) != 64
+            or any(character not in "0123456789abcdef" for character in self.record_hash)
+        ):
+            raise IntegrityViolation("record_hash must be a lowercase SHA-256 digest or null")
