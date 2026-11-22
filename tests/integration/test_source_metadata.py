@@ -10,7 +10,7 @@ import asyncpg
 import pytest
 from alembic.config import Config
 from sqlalchemy.engine import URL, make_url
-
+from alembic import command
 from jamp2.domain.claim import NormalizedClaim
 from jamp2.evidence.conflict import SourceObservation
 from jamp2.evidence.digest import compute_record_hash, compute_sha256
@@ -23,7 +23,6 @@ from jamp2.evidence.multisource import (
 )
 from jamp2.evidence.policy import SourcePolicyRecord
 from jamp2.providers.moex import _moex_capture_metadata
-from alembic import command
 
 
 
