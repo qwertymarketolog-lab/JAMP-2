@@ -2,16 +2,21 @@
 from __future__ import annotations
 
 import asyncio
+import base64
+import binascii
+import hmac
 import math
 import warnings
 from collections.abc import Sequence
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from typing import Any
+from urllib.parse import urlsplit
 
 from jamp2.domain.claim import NormalizedClaim
 from jamp2.evidence.conflict import SourceObservation, detect_conflicts
-from jamp2.evidence.model import EvidenceRecord
+from jamp2.evidence.digest import compute_record_hash, compute_sha256
+from jamp2.evidence.model import EvidenceRecord, IntegrityViolation
 from jamp2.evidence.policy import (
     SourceObservationInput,
     SourcePolicyRecord,
@@ -202,31 +207,155 @@ def _parse_capture_time(value: object) -> datetime | None:
     return parsed.astimezone(UTC)
 
 
+def _verified_source_records(
+    outcomes: tuple[SourceOutcome, ...],
+    evidence_records: Sequence[EvidenceRecord],
+) -> dict[str, tuple[EvidenceRecord, ...]]:
+    """Bind every provider outcome to hash-verified records returned by the ledger."""
+    if not evidence_records:
+        raise IntegrityViolation("evidence ledger records are required for arbitration")
+
+    evidence_ids: set[str] = set()
+    claim_ids: set[str] = set()
+    for record in evidence_records:
+        if record.evidence_id in evidence_ids:
+            raise IntegrityViolation("duplicate evidence_id in arbitration input")
+        evidence_ids.add(record.evidence_id)
+        claim_ids.add(record.claim_id)
+        if not record.record_hash or not hmac.compare_digest(
+            compute_record_hash(record), record.record_hash
+        ):
+            raise IntegrityViolation("evidence record_hash is missing or invalid")
+        if not hmac.compare_digest(compute_sha256(record.raw_body_bytes), record.raw_sha256):
+            raise IntegrityViolation("evidence raw_sha256 is invalid")
+        if not record.body_complete and record.verdict_status != "SOURCE_FAILURE":
+            # Incomplete source responses remain durable but are never eligible.
+            continue
+    if len(claim_ids) != 1:
+        raise IntegrityViolation("arbitration evidence must belong to exactly one claim")
+
+    unused = {record.evidence_id: record for record in evidence_records}
+    by_source: dict[str, tuple[EvidenceRecord, ...]] = {}
+    for outcome in outcomes:
+        matched: list[EvidenceRecord] = []
+        captures = outcome.raw_evidence
+        if captures:
+            for capture in captures:
+                encoded = capture.get("raw_body_base64")
+                digest = capture.get("sha256_body")
+                source = capture.get("source")
+                url = capture.get("url")
+                http_status = capture.get("status_code")
+                complete = capture.get("body_complete")
+                if (
+                    not isinstance(encoded, str)
+                    or not isinstance(digest, str)
+                    or source != outcome.source.provider_id
+                    or not isinstance(url, str)
+                    or not isinstance(http_status, int)
+                    or isinstance(http_status, bool)
+                    or not isinstance(complete, bool)
+                ):
+                    raise IntegrityViolation("provider capture metadata is incomplete")
+                try:
+                    raw_body = base64.b64decode(encoded, validate=True)
+                except (binascii.Error, ValueError) as exc:
+                    raise IntegrityViolation("provider capture body is invalid base64") from exc
+                actual_digest = compute_sha256(raw_body)
+                if not hmac.compare_digest(actual_digest, digest):
+                    raise IntegrityViolation("provider capture raw digest mismatch")
+                parsed_url = urlsplit(url)
+                if parsed_url.scheme != "https" or parsed_url.hostname != outcome.source.allowed_host:
+                    raise IntegrityViolation("provider capture URL is outside the fixed source host")
+                fetched_at = _parse_capture_time(capture.get("fetched_at"))
+                observed_at = _parse_capture_time(capture.get("provider_observed_at"))
+                source_date = capture.get("source_date")
+                if not isinstance(source_date, str):
+                    source_date = None
+                expected_verdict = (
+                    "SOURCE_OBSERVATION_CAPTURED"
+                    if outcome.observation.usable
+                    else "SOURCE_RESPONSE_CAPTURED"
+                )
+                candidates = [
+                    record for record in unused.values()
+                    if record.provider == outcome.source.provider_id
+                    and record.url == url
+                    and record.http_status == http_status
+                    and record.raw_body_bytes == raw_body
+                    and record.raw_sha256 == actual_digest
+                    and record.body_complete is complete
+                    and record.provider_adapter_version == outcome.source.adapter_version
+                    and record.parser_version == "jamp-provider-json-v1"
+                    and record.verdict_status == expected_verdict
+                    and record.fetched_at == fetched_at
+                    and record.provider_observed_at == observed_at
+                    and record.source_date == source_date
+                    and isinstance(record.parsed_value, dict)
+                    and record.parsed_value.get("source_status") == outcome.status
+                    and record.parsed_value.get("provider_result") == outcome.details
+                ]
+                if len(candidates) != 1:
+                    raise IntegrityViolation(
+                        "provider outcome does not match exactly one persisted evidence record"
+                    )
+                selected = candidates[0]
+                unused.pop(selected.evidence_id)
+                matched.append(selected)
+        else:
+            candidates = [
+                record for record in unused.values()
+                if record.provider == outcome.source.provider_id
+                and record.verdict_status == "SOURCE_FAILURE"
+                and record.raw_body_bytes == b""
+                and record.body_complete is False
+                and record.http_status is None
+                and record.provider_adapter_version == outcome.source.adapter_version
+                and isinstance(record.parsed_value, dict)
+                and record.parsed_value.get("source_status") == outcome.status
+                and record.parsed_value.get("provider_result") == outcome.details
+            ]
+            if len(candidates) != 1:
+                raise IntegrityViolation(
+                    "provider failure does not match exactly one persisted failure record"
+                )
+            selected = candidates[0]
+            unused.pop(selected.evidence_id)
+            matched.append(selected)
+        if not matched:
+            raise IntegrityViolation("required provider has no persisted evidence")
+        by_source[outcome.source.provider_id] = tuple(matched)
+
+    if unused:
+        raise IntegrityViolation("arbitration received unreferenced evidence records")
+    return by_source
+
+
 def arbitrate_from_evidence(
     claim: NormalizedClaim,
     policy: MultiSourcePolicy,
     outcomes: tuple[SourceOutcome, ...],
     evidence_records: Sequence[EvidenceRecord],
 ) -> ArbitrationResult:
-    """Apply policy once to already-fetched outcomes; never performs network access."""
-    _ = evidence_records
+    """Apply policy only to provider outcomes proven against persisted ledger records."""
     expected_ids = tuple(source.provider_id for source in policy.required_sources)
     actual_ids = tuple(outcome.source.provider_id for outcome in outcomes)
     if actual_ids != expected_ids:
         raise ValueError("outcomes must contain every required source in policy order")
+    records_by_source = _verified_source_records(outcomes, evidence_records)
 
     source_policy = _source_policy(claim, policy)
     policy_inputs: list[SourceObservationInput] = []
     for outcome in outcomes:
-        latest = outcome.raw_evidence[-1] if outcome.raw_evidence else {}
+        source_records = records_by_source[outcome.source.provider_id]
+        latest = source_records[-1]
         identifiers = outcome.details.get("source_identifiers", ())
         policy_inputs.append(
             SourceObservationInput(
                 provider_id=outcome.source.provider_id,
-                provider_observed_at=latest.get("provider_observed_at"),
-                fetched_at=_parse_capture_time(latest.get("fetched_at")),
-                body_complete=bool(outcome.raw_evidence)
-                and all(item.get("body_complete") is True for item in outcome.raw_evidence),
+                provider_observed_at=latest.provider_observed_at,
+                fetched_at=latest.fetched_at,
+                body_complete=all(item.body_complete for item in source_records),
                 request_succeeded=outcome.status in {"E4_VERIFIED", "E4_CONTRADICTED"},
                 identifiers=(
                     tuple(identifiers)
@@ -339,4 +468,9 @@ async def arbitrate(
         stacklevel=2,
     )
     outcomes = await fetch_provider_results(claim, policy, providers)
-    return arbitrate_from_evidence(claim, policy, outcomes, ())
+    return ArbitrationResult(
+        "INCONCLUSIVE",
+        {"status": "POLICY_GATE_BLOCKED", "usable_observation_count": 0},
+        outcomes,
+        ("EVIDENCE_LEDGER_REQUIRED",),
+    )
