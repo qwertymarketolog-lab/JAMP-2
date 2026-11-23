@@ -475,6 +475,7 @@ def test_api_multi_source_conflict_is_persisted_and_replayed_from_postgres() -> 
             replay_body = replay.json()
             assert replay_body["replay_status"] == "AMBIGUOUS"
             assert replay_body["matches_original"] is True
+            assert replay_body["reason_codes_match"] is True
             assert replay_body["reason_code"] == "POLICY_GATE_AND_REDUCER_REPLAYED"
             assert replay_body["replay_scope"] == "POLICY_GATE_AND_REDUCER"
             assert replay_body["policy_gate_revalidated"] is True
