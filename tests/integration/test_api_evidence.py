@@ -17,6 +17,7 @@ from jamp2.domain.claim import NormalizedClaim
 from jamp2.evidence.digest import compute_sha256
 from jamp2.evidence.model import EvidenceRecord
 from jamp2.evidence.multisource import MultiSourcePolicy, SourceSpec
+from jamp2.evidence.policy import SourcePolicyRecord, SourceProvenance
 from jamp2.ledger.postgres import LedgerUnavailable, PostgresLedger
 from jamp2.providers.base import ProviderResult
 
@@ -320,6 +321,176 @@ def test_partial_multi_source_timeout_is_ambiguous_in_postgres_ledger() -> None:
             assert verdict_response.status_code == 200
             assert verdict_response.json()["status"] == "AMBIGUOUS"
             assert verdict_response.json()["policy_version"] == "integration-exact-v1"
+        await ledger.close()
+
+    asyncio.run(run())
+
+
+
+def test_api_multi_source_conflict_is_persisted_and_replayed_from_postgres() -> None:
+    class PriceProvider:
+        def __init__(self, provider_id: str, host: str, price: float) -> None:
+            self.provider_id = provider_id
+            self.host = host
+            self.price = price
+            self.calls = 0
+
+        def verify_claim(self, claim: NormalizedClaim) -> ProviderResult:
+            self.calls += 1
+            observed_at = datetime.now(UTC).isoformat()
+            raw = (
+                f'{{"provider":"{self.provider_id}","price":{self.price:.2f},"currency":"USD"}}'
+            ).encode()
+            return ProviderResult(
+                "E4_VERIFIED",
+                {
+                    "observed_last": self.price,
+                    "source_identifiers": [claim.subject_identifier],
+                    "quote_currency": claim.unit,
+                    "price_type": "SPOT",
+                },
+                [
+                    {
+                        "source": self.provider_id,
+                        "url": f"https://{self.host}/price",
+                        "status_code": 200,
+                        "body_complete": True,
+                        "provider_observed_at": observed_at,
+                        "fetched_at": observed_at,
+                        "raw_body_base64": base64.b64encode(raw).decode("ascii"),
+                        "sha256_body": compute_sha256(raw),
+                    }
+                ],
+            )
+
+    async def run() -> None:
+        ledger = PostgresLedger(DATABASE_URL)
+        await reset_ledger(ledger)
+        source_a = PriceProvider("source-a", "source-a.example", 100.0)
+        source_b = PriceProvider("source-b", "source-b.example", 105.0)
+        source_policy = SourcePolicyRecord(
+            policy_id="jamp2.provider-price-comparison",
+            version=1,
+            asset_class="equity_security",
+            required_identifiers=("SBER",),
+            market_calendar_required=False,
+            quote_currency="USD",
+            price_type="SPOT",
+            required_sources=("source-a", "source-b"),
+            independence_group="integration-independent-sources",
+            max_age_seconds=120,
+            max_time_skew_seconds=5,
+            verification_mode="MULTI_SOURCE",
+            provenance=(
+                SourceProvenance(
+                    provider_id="source-a",
+                    upstream_entity="upstream-a",
+                    aggregation_methodology="direct-spot-observation",
+                    transport_failure_domain="transport-a",
+                    calculation_failure_domain="calculation-a",
+                    independence_status="CONFIRMED",
+                ),
+                SourceProvenance(
+                    provider_id="source-b",
+                    upstream_entity="upstream-b",
+                    aggregation_methodology="direct-spot-observation",
+                    transport_failure_domain="transport-b",
+                    calculation_failure_domain="calculation-b",
+                    independence_status="CONFIRMED",
+                ),
+            ),
+        )
+        policy = MultiSourcePolicy(
+            "jamp2.provider-price-comparison",
+            "provider-defaults-v1",
+            (
+                SourceSpec("source_a", "source-a", "source-a.example", "test-adapter-v1"),
+                SourceSpec("source_b", "source-b", "source-b.example", "test-adapter-v1"),
+            ),
+            source_policy=source_policy,
+        )
+        application = create_app(
+            ledger,
+            api_key="integration-test-key",
+            providers={"source_a": source_a, "source_b": source_b},
+            code_version="integration-test-sha",
+            policies={("equity_security", "USD"): policy},
+        )
+        payload = claim_payload()
+        payload["unit"] = "USD"
+        payload["text"] = "SBER spot price is disputed at 100.00 or 105.00 USD"
+        headers = {
+            "X-API-Key": "integration-test-key",
+            "Idempotency-Key": "postgres-multisource-conflict-001",
+        }
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=application),
+            base_url="http://test",
+            headers=headers,
+        ) as client:
+            created = await client.post("/v1/claims/verify", json=payload)
+            assert created.status_code == 201
+            body = created.json()
+            assert body["verdict"] == "AMBIGUOUS"
+            assert body["arbitration"]["reason_codes"].count("SOURCE_VALUES_DIVERGE") == 1
+            assert body["arbitration"]["verification_mode"] == "MULTI_SOURCE"
+            assert body["arbitration"]["independent_cross_check"] is True
+            assert body["arbitration"]["reducer"]["status"] == "AMBIGUOUS"
+            assert body["evidence_count"] == 2
+            assert set(body["provider"]) == {"source-a", "source-b"}
+            assert source_a.calls == 1
+            assert source_b.calls == 1
+
+            evidence_responses = [
+                await client.get(f"/v1/evidence/{evidence_id}")
+                for evidence_id in body["evidence_ids"]
+            ]
+            assert all(response.status_code == 200 for response in evidence_responses)
+            evidence_rows = [response.json() for response in evidence_responses]
+            assert {row["provider"] for row in evidence_rows} == {"source-a", "source-b"}
+            for row in evidence_rows:
+                raw = base64.b64decode(row["raw_body_base64"], validate=True)
+                assert row["raw_sha256"] == compute_sha256(raw)
+                assert row["body_complete"] is True
+                assert row["parsed_value"]["provider_result"]["quote_currency"] == "USD"
+            assert {row["parsed_value"]["provider_result"]["observed_last"] for row in evidence_rows} == {
+                100.0,
+                105.0,
+            }
+
+            verdict_response = await client.get(f"/v1/verdicts/{body['verdict_id']}")
+            assert verdict_response.status_code == 200
+            verdict_row = verdict_response.json()
+            assert verdict_row["status"] == "AMBIGUOUS"
+            assert verdict_row["verification_mode"] == "MULTI_SOURCE"
+            assert set(verdict_row["evidence_ids"]) == set(body["evidence_ids"])
+
+            replay = await client.post(f"/v1/verdicts/{body['verdict_id']}/replay")
+            assert replay.status_code == 200
+            replay_body = replay.json()
+            assert replay_body["replay_status"] == "AMBIGUOUS"
+            assert replay_body["matches_original"] is True
+            assert replay_body["reason_code"] == "MULTI_SOURCE_CONFLICT_REPRODUCED"
+            assert replay_body["replay_scope"] == "REDUCER_ONLY"
+            assert replay_body["policy_gate_revalidated"] is False
+            assert replay_body["reducer"]["usable_observation_count"] == 2
+            assert replay_body["network_calls"] == 0
+            assert source_a.calls == 1
+            assert source_b.calls == 1
+
+            duplicate = await client.post("/v1/claims/verify", json=payload)
+            assert duplicate.status_code == 201
+            assert duplicate.json() == body
+            assert source_a.calls == 1
+            assert source_b.calls == 1
+
+            changed_payload = dict(payload)
+            changed_payload["expected_value"] = 301
+            reused_key = await client.post("/v1/claims/verify", json=changed_payload)
+            assert reused_key.status_code == 409
+            assert reused_key.json() == {"error": "IDEMPOTENCY_KEY_REUSED"}
+            assert source_a.calls == 1
+            assert source_b.calls == 1
         await ledger.close()
 
     asyncio.run(run())
