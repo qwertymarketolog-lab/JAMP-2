@@ -353,8 +353,10 @@ def build_router(
             "unit": claim.unit,
         }
         policy_evaluated_at = datetime.now(UTC)
-        replay_context = build_policy_replay_context(
-            claim, policy, evaluated_at=policy_evaluated_at
+        replay_context = (
+            build_policy_replay_context(claim, policy, evaluated_at=policy_evaluated_at)
+            if len(policy.required_sources) > 1
+            else None
         )
         records: list[EvidenceRecord] = []
         try:
@@ -365,7 +367,7 @@ def build_router(
                     "source_details": outcome.details,
                     "provider_result": outcome.details,
                     "trade_date": outcome.details.get("trade_date"),
-                    "replay_context": replay_context,
+                    **({"replay_context": replay_context} if replay_context is not None else {}),
                 }
                 if outcome.raw_evidence:
                     for observation in outcome.raw_evidence:
