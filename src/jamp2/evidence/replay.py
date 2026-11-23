@@ -177,9 +177,11 @@ def _replay_multi_source_conflict(
     if len(records) < 2:
         return "INCONCLUSIVE", "MULTI_SOURCE_EVIDENCE_SHAPE_UNSUPPORTED", {}
 
-    parsed_records = [record.parsed_value for record in records]
-    if any(not isinstance(item, dict) for item in parsed_records):
-        return "INCONCLUSIVE", "POLICY_REPLAY_CONTEXT_MISSING", {}
+    parsed_records: list[dict[str, Any]] = []
+    for record in records:
+        if not isinstance(record.parsed_value, dict):
+            return "INCONCLUSIVE", "POLICY_REPLAY_CONTEXT_MISSING", {}
+        parsed_records.append(record.parsed_value)
     contexts = [item.get("replay_context") for item in parsed_records]
     if (
         any(not isinstance(item, dict) for item in contexts)
@@ -250,7 +252,11 @@ def _replay_multi_source_conflict(
             source_records = [record for record in records if record.provider == source.provider_id]
             if not source_records:
                 raise ValueError("required source has no persisted evidence")
-            parsed = [record.parsed_value for record in source_records]
+            parsed: list[dict[str, Any]] = []
+            for record in source_records:
+                if not isinstance(record.parsed_value, dict):
+                    raise ValueError("source evidence parsed metadata is invalid")
+                parsed.append(record.parsed_value)
             source_statuses = {item.get("source_status") for item in parsed}
             provider_results = [item.get("provider_result") for item in parsed]
             if len(source_statuses) != 1 or any(
