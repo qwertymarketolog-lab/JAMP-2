@@ -198,11 +198,24 @@ def _replay_multi_source_conflict(
         if parsed.get("source_status") not in {"E4_VERIFIED", "E4_CONTRADICTED"}:
             return "INCONCLUSIVE", "MULTI_SOURCE_PROVIDER_STATUS_UNSUPPORTED", {}
         observed = _finite_positive(provider_result.get("observed_last"))
+        try:
+            raw_payload = json.loads(record.raw_body_bytes.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            return "INCONCLUSIVE", "MULTI_SOURCE_RAW_JSON_INVALID", {}
+        raw_observed = (
+            _finite_positive(raw_payload.get("price"))
+            if isinstance(raw_payload, dict)
+            else None
+        )
+        raw_provider = raw_payload.get("provider") if isinstance(raw_payload, dict) else None
         identifiers = provider_result.get("source_identifiers")
         quote_currency = provider_result.get("quote_currency")
         price_type = provider_result.get("price_type")
         if (
             observed is None
+            or raw_observed is None
+            or raw_observed != observed
+            or raw_provider != record.provider
             or not isinstance(identifiers, list)
             or subject_identifier not in identifiers
             or quote_currency != unit
