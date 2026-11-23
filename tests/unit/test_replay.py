@@ -288,6 +288,7 @@ def test_multi_source_replay_reduces_persisted_conflicting_observations() -> Non
 
     assert result["replay_status"] == "AMBIGUOUS"
     assert result["matches_original"] is True
+    assert result["reason_codes_match"] is True
     assert result["reason_code"] == "POLICY_GATE_AND_REDUCER_REPLAYED"
     assert result["replay_scope"] == "POLICY_GATE_AND_REDUCER"
     assert result["policy_gate_revalidated"] is True
@@ -348,6 +349,7 @@ def test_multi_source_replay_detects_when_original_conflict_is_not_reproduced() 
 
     assert result["replay_status"] == "VERIFIED"
     assert result["matches_original"] is False
+    assert result["reason_codes_match"] is False
     assert result["reason_code"] == "POLICY_GATE_AND_REDUCER_REPLAYED"
     assert result["policy_gate_revalidated"] is True
     assert result["network_calls"] == 0
