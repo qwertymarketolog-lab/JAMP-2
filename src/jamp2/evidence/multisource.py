@@ -200,6 +200,8 @@ def build_policy_replay_context(
     evaluated_at: datetime,
 ) -> dict[str, Any]:
     """Return the exact immutable policy inputs needed for deterministic replay."""
+    if evaluated_at.tzinfo is None or evaluated_at.utcoffset() is None:
+        raise ValueError("evaluated_at must be timezone-aware")
     source_policy = _source_policy(claim, policy)
     return {
         "schema_version": "jamp2-policy-gate-replay-v1",
