@@ -9,6 +9,7 @@ from typing import Any
 
 from jamp2.evidence.canonicalize import CANONICALIZATION_VERSION
 from jamp2.evidence.digest import compute_sha256
+from jamp2.evidence.conflict import SourceObservation, detect_conflicts
 from jamp2.evidence.model import EvidenceRecord
 from jamp2.evidence.verdict import VerdictRecord
 
@@ -155,6 +156,78 @@ def _replay_coingecko(
     return "OUT_OF_SCOPE", "COINGECKO_COIN_OR_PRICE_NOT_FOUND", None
 
 
+
+def _replay_multi_source_conflict(
+    verdict: VerdictRecord,
+    records: Sequence[EvidenceRecord],
+    claim: dict[str, Any],
+) -> tuple[str, str, dict[str, Any]]:
+    """Replay persisted multi-source reducer inputs without provider access.
+
+    This deliberately replays the reducer only. Source provenance and the original
+    policy-gate decision are not persisted as independently replayable inputs yet.
+    """
+    if verdict.verification_mode != "MULTI_SOURCE":
+        return "INCONCLUSIVE", "MULTI_SOURCE_MODE_MISSING", {}
+    if "SOURCE_VALUES_DIVERGE" not in verdict.reason_codes:
+        return "INCONCLUSIVE", "ORIGINAL_CONFLICT_REASON_MISSING", {}
+    if len(records) < 2 or len({record.provider for record in records}) != len(records):
+        return "INCONCLUSIVE", "MULTI_SOURCE_EVIDENCE_SHAPE_UNSUPPORTED", {}
+
+    subject_kind = claim.get("subject_kind")
+    subject_identifier = claim.get("subject_identifier")
+    predicate = claim.get("predicate")
+    unit = claim.get("unit")
+    if not all(isinstance(item, str) and item for item in (
+        subject_kind, subject_identifier, predicate, unit
+    )):
+        return "INCONCLUSIVE", "CLAIM_SNAPSHOT_INVALID", {}
+
+    observations: list[SourceObservation] = []
+    price_types: set[str] = set()
+    for record in records:
+        parsed = record.parsed_value
+        if (
+            not isinstance(parsed, dict)
+            or record.verdict_status != "SOURCE_OBSERVATION_CAPTURED"
+        ):
+            return "INCONCLUSIVE", "MULTI_SOURCE_OBSERVATION_NOT_CAPTURED", {}
+        provider_result = parsed.get("provider_result")
+        if not isinstance(provider_result, dict):
+            return "INCONCLUSIVE", "MULTI_SOURCE_PROVIDER_RESULT_MISSING", {}
+        if parsed.get("source_status") not in {"E4_VERIFIED", "E4_CONTRADICTED"}:
+            return "INCONCLUSIVE", "MULTI_SOURCE_PROVIDER_STATUS_UNSUPPORTED", {}
+        observed = _finite_positive(provider_result.get("observed_last"))
+        identifiers = provider_result.get("source_identifiers")
+        quote_currency = provider_result.get("quote_currency")
+        price_type = provider_result.get("price_type")
+        if (
+            observed is None
+            or not isinstance(identifiers, list)
+            or subject_identifier not in identifiers
+            or quote_currency != unit
+            or not isinstance(price_type, str)
+            or not price_type
+        ):
+            return "INCONCLUSIVE", "MULTI_SOURCE_OBSERVATION_METADATA_INVALID", {}
+        price_types.add(price_type)
+        observations.append(
+            SourceObservation(
+                source_id=record.provider,
+                fact_key=f"{subject_kind}:{subject_identifier}:{predicate}",
+                value=observed,
+                unit=unit,
+                usable=True,
+            )
+        )
+
+    if len(price_types) != 1:
+        return "INCONCLUSIVE", "MULTI_SOURCE_PRICE_TYPES_INCOMPARABLE", {}
+    reducer = detect_conflicts(observations)
+    if reducer.get("status") != "AMBIGUOUS":
+        return "INCONCLUSIVE", "MULTI_SOURCE_CONFLICT_NOT_REPRODUCED", reducer
+    return "AMBIGUOUS", "MULTI_SOURCE_CONFLICT_REPRODUCED", reducer
+
 def replay_verdict(
     verdict: VerdictRecord,
     records: Sequence[EvidenceRecord],
@@ -181,6 +254,25 @@ def replay_verdict(
 
     providers = {record.provider for record in records}
     adapter_versions = {record.provider_adapter_version for record in records}
+    if verdict.verification_mode == "MULTI_SOURCE":
+        status, reason, reducer = _replay_multi_source_conflict(verdict, records, claim)
+        return {
+            "verdict_id": verdict.verdict_id,
+            "claim_id": verdict.claim_id,
+            "original_status": verdict.status,
+            "replay_status": status,
+            "matches_original": status == verdict.status,
+            "reason_code": reason,
+            "reducer": reducer,
+            "replay_scope": "REDUCER_ONLY",
+            "policy_gate_revalidated": False,
+            "policy_id": verdict.policy_id,
+            "policy_version": verdict.policy_version,
+            "code_version": verdict.code_version,
+            "canonicalization_version": verdict.canonicalization_version,
+            "evidence_ids": list(verdict.evidence_ids),
+            "network_calls": 0,
+        }
     if (
         providers == {"moex.iss"}
         and adapter_versions == {"moex-iss-adapter-v1"}
