@@ -317,3 +317,55 @@ def test_downgrade_007_pending_lease(
     assert "owner_token" not in columns_after
     assert "lease_expires_at" not in columns_after
     assert "attempt_count" not in columns_after
+
+
+async def _set_v2_metadata(database_url: URL) -> None:
+    connection = await asyncpg.connect(
+        **_connect_kwargs(database_url, database_url.database or "")
+    )
+    try:
+        now = datetime.now(UTC)
+        await connection.execute(
+            "UPDATE evidence SET hash_schema_version = 'v2', fetched_at = $1, "
+            "provider_observed_at = $1, source_date = '2026-11-22' "
+            "WHERE evidence_id = 'evidence-1'",
+            now,
+        )
+        await connection.execute(
+            "UPDATE verdicts SET verification_mode = 'SINGLE_SOURCE' "
+            "WHERE verdict_id = 'verdict-1'"
+        )
+    finally:
+        await connection.close()
+
+
+def test_008_downgrade_blocks_populated_v2_metadata_without_data_loss(
+    migration_database: tuple[Config, URL],
+) -> None:
+    config, database_url = migration_database
+    command.upgrade(config, "head")
+    asyncio.run(_insert_evidence(database_url))
+    asyncio.run(_insert_verdict(database_url))
+    asyncio.run(_set_v2_metadata(database_url))
+
+    with pytest.raises(RuntimeError, match="v2 evidence or verification_mode metadata"):
+        command.downgrade(config, "007_pending_lease")
+
+    assert asyncio.run(_current_revision(database_url)) == "008_source_metadata"
+    assert asyncio.run(_count(database_url, "evidence")) == 1
+    assert asyncio.run(_count(database_url, "verdicts")) == 1
+
+
+def test_008_downgrade_preserves_populated_legacy_v1_rows(
+    migration_database: tuple[Config, URL],
+) -> None:
+    config, database_url = migration_database
+    command.upgrade(config, "head")
+    asyncio.run(_insert_evidence(database_url))
+    asyncio.run(_insert_verdict(database_url))
+
+    command.downgrade(config, "007_pending_lease")
+
+    assert asyncio.run(_current_revision(database_url)) == "007_pending_lease"
+    assert asyncio.run(_count(database_url, "evidence")) == 1
+    assert asyncio.run(_count(database_url, "verdicts")) == 1

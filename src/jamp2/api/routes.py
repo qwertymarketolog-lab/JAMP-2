@@ -169,7 +169,9 @@ def _evidence_record(
         raise IntegrityViolation("provider returned invalid base64 evidence") from exc
     actual_digest = compute_sha256(raw_body)
     source_date_value = observation.get("source_date")
-    source_date = source_date_value if isinstance(source_date_value, str) else None
+    if source_date_value is not None and not isinstance(source_date_value, str):
+        raise IntegrityViolation("provider source_date must be a string or null")
+    source_date = source_date_value
     if not hmac.compare_digest(actual_digest, source_digest):
         raise IntegrityViolation("provider raw response digest mismatch")
     if source != provider_id:

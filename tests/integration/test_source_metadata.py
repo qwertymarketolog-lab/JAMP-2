@@ -7,6 +7,7 @@ import uuid
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from typing import Any, cast
 
 import asyncpg
 import pytest
@@ -76,8 +77,22 @@ def _evidence_records(
     for outcome in outcomes:
         for capture in outcome.raw_evidence:
             raw = base64.b64decode(capture["raw_body_base64"], validate=True)
-            fetched_at = datetime.fromisoformat(capture["fetched_at"])
-            observed_at = datetime.fromisoformat(capture["provider_observed_at"])
+            fetched_value = capture.get("fetched_at")
+            observed_value = capture.get("provider_observed_at")
+            fetched_at = (
+                datetime.fromisoformat(fetched_value)
+                if isinstance(fetched_value, str)
+                else None
+            )
+            observed_at = (
+                datetime.fromisoformat(observed_value)
+                if isinstance(observed_value, str)
+                else None
+            )
+            source_date_value = capture.get("source_date")
+            source_date = (
+                source_date_value if isinstance(source_date_value, str) else None
+            )
             record = EvidenceRecord(
                 evidence_id=f"evidence-{outcome.source.provider_id}",
                 claim_id=claim_id,
@@ -86,7 +101,7 @@ def _evidence_records(
                 http_status=capture["status_code"],
                 raw_body_bytes=raw,
                 raw_sha256=compute_sha256(raw),
-                captured_at_utc=fetched_at,
+                captured_at_utc=fetched_at or datetime.now(UTC),
                 parsed_value={
                     "claim": {
                         "text": claim.text,
@@ -111,6 +126,7 @@ def _evidence_records(
                 hash_schema_version="v2",
                 fetched_at=fetched_at,
                 provider_observed_at=observed_at,
+                source_date=source_date,
             )
             records.append(replace(record, record_hash=compute_record_hash(record)))
     return tuple(records)
@@ -467,3 +483,84 @@ def test_arbitration_rejects_mixed_claim_ids_even_when_payload_matches():
             (own_record, foreign_record),
             expected_claim_id="claim-A",
         )
+
+
+@pytest.mark.parametrize(
+    ("drop_fetched_at", "drop_provider_observed_at", "expected_verdict"),
+    [
+        (False, False, "VERIFIED"),
+        (False, True, "AMBIGUOUS"),
+        (True, False, "AMBIGUOUS"),
+        (True, True, "AMBIGUOUS"),
+    ],
+)
+def test_v2_schema_version_does_not_certify_capture_completeness(
+    drop_fetched_at: bool,
+    drop_provider_observed_at: bool,
+    expected_verdict: str,
+) -> None:
+    source = SourceSpec("coingecko", "coingecko", "api.coingecko.com", "coingecko-adapter-v1")
+    claim = _claim("crypto_asset", "bitcoin", "USD")
+    outcome = _outcome(source, "bitcoin", quote="USD", price_type="SPOT", calendar=None)
+    capture = dict(outcome.raw_evidence[0])
+    if drop_fetched_at:
+        capture["fetched_at"] = None
+    if drop_provider_observed_at:
+        capture["provider_observed_at"] = None
+    outcome = replace(outcome, raw_evidence=[capture])
+    records = _evidence_records((outcome,), claim)
+
+    assert records[0].hash_schema_version == "v2"
+    assert records[0].fetched_at is not None if not drop_fetched_at else records[0].fetched_at is None
+    assert (
+        records[0].provider_observed_at is None
+        if drop_provider_observed_at
+        else records[0].provider_observed_at is not None
+    )
+    result = arbitrate_from_evidence(
+        claim,
+        _policy(source, asset="crypto_asset", identifier="bitcoin", quote="USD",
+                price_type="SPOT", calendar_required=False),
+        (outcome,),
+        records,
+        expected_claim_id="claim-offline",
+    )
+    assert result.verdict_status == expected_verdict
+    if expected_verdict == "AMBIGUOUS":
+        assert "SOURCE_TIMESTAMP_OR_BODY_INCOMPLETE" in result.reason_codes
+        assert result.reducer["status"] == "POLICY_GATE_BLOCKED"
+
+
+def _record_with_source_date(source_date: object) -> EvidenceRecord:
+    captured = datetime.now(UTC)
+    return EvidenceRecord(
+        evidence_id="source-date-test",
+        claim_id="claim-source-date",
+        provider="moex.iss",
+        url="https://iss.moex.com/iss/evidence",
+        http_status=200,
+        raw_body_bytes=b"{}",
+        raw_sha256=compute_sha256(b"{}"),
+        captured_at_utc=captured,
+        parsed_value={},
+        verdict_status="SOURCE_RESPONSE_CAPTURED",
+        parent_hash=None,
+        hash_schema_version="v2",
+        source_date=cast(Any, source_date),
+    )
+
+
+@pytest.mark.parametrize(
+    "source_date",
+    ["2026-02-30", "2026/02/28", "2026-W09-6", "2026-2-8", ""],
+)
+def test_source_date_rejects_noncanonical_or_impossible_calendar_dates(
+    source_date: str,
+) -> None:
+    with pytest.raises(IntegrityViolation, match="source_date"):
+        _record_with_source_date(source_date)
+
+
+def test_source_date_rejects_non_string_values() -> None:
+    with pytest.raises(IntegrityViolation, match="source_date"):
+        _record_with_source_date(20261122)

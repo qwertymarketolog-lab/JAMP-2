@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from typing import TypeAlias
 
 JSONValue: TypeAlias = (
@@ -97,10 +98,17 @@ class EvidenceRecord:
                 or metadata_value.utcoffset() is None
             ):
                 raise ValueError(f"{field_name} must be timezone-aware or null")
-        if self.source_date is not None and (
-            not isinstance(self.source_date, str) or not self.source_date.strip()
-        ):
-            raise ValueError("source_date must be a non-empty string or null")
+        if self.source_date is not None:
+            if not isinstance(self.source_date, str) or re.fullmatch(
+                r"\\d{4}-\\d{2}-\\d{2}", self.source_date
+            ) is None:
+                raise IntegrityViolation("source_date must use YYYY-MM-DD format")
+            try:
+                date.fromisoformat(self.source_date)
+            except ValueError as exc:
+                raise IntegrityViolation(
+                    "source_date must be a valid calendar date"
+                ) from exc
         if self.parent_hash is not None and (
             not isinstance(self.parent_hash, str) or not self.parent_hash
         ):
