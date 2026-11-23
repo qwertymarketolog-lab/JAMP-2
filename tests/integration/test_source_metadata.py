@@ -511,7 +511,10 @@ def test_v2_schema_version_does_not_certify_capture_completeness(
     records = _evidence_records((outcome,), claim)
 
     assert records[0].hash_schema_version == "v2"
-    assert records[0].fetched_at is not None if not drop_fetched_at else records[0].fetched_at is None
+    if drop_fetched_at:
+        assert records[0].fetched_at is None
+    else:
+        assert records[0].fetched_at is not None
     assert (
         records[0].provider_observed_at is None
         if drop_provider_observed_at
@@ -564,3 +567,24 @@ def test_source_date_rejects_noncanonical_or_impossible_calendar_dates(
 def test_source_date_rejects_non_string_values() -> None:
     with pytest.raises(IntegrityViolation, match="source_date"):
         _record_with_source_date(20261122)
+
+
+
+def test_arbitration_rejects_non_string_source_date_capture():
+    source = SourceSpec("coingecko", "coingecko", "api.coingecko.com", "coingecko-adapter-v1")
+    claim = _claim("crypto_asset", "bitcoin", "USD")
+    outcome = _outcome(source, "bitcoin", quote="USD", price_type="SPOT", calendar=None)
+    capture = dict(outcome.raw_evidence[0])
+    capture["source_date"] = 20261122
+    outcome = replace(outcome, raw_evidence=[capture])
+    records = _evidence_records((outcome,), claim)
+
+    with pytest.raises(IntegrityViolation, match="source_date must be a string or null"):
+        arbitrate_from_evidence(
+            claim,
+            _policy(source, asset="crypto_asset", identifier="bitcoin", quote="USD",
+                    price_type="SPOT", calendar_required=False),
+            (outcome,),
+            records,
+            expected_claim_id="claim-offline",
+        )

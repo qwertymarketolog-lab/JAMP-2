@@ -100,7 +100,7 @@ class EvidenceRecord:
                 raise ValueError(f"{field_name} must be timezone-aware or null")
         if self.source_date is not None:
             if not isinstance(self.source_date, str) or re.fullmatch(
-                r"\\d{4}-\\d{2}-\\d{2}", self.source_date
+                r"\d{4}-\d{2}-\d{2}", self.source_date
             ) is None:
                 raise IntegrityViolation("source_date must use YYYY-MM-DD format")
             try:

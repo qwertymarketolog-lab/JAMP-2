@@ -277,8 +277,10 @@ def _verified_source_records(
                 fetched_at = _parse_capture_time(capture.get("fetched_at"))
                 observed_at = _parse_capture_time(capture.get("provider_observed_at"))
                 source_date = capture.get("source_date")
-                if not isinstance(source_date, str):
-                    source_date = None
+                if source_date is not None and not isinstance(source_date, str):
+                    raise IntegrityViolation(
+                        "provider capture source_date must be a string or null"
+                    )
                 expected_verdict = (
                     "SOURCE_OBSERVATION_CAPTURED"
                     if outcome.observation.usable
