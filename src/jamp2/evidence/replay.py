@@ -187,6 +187,8 @@ def _replay_multi_source_conflict(
     ):
         return "INCONCLUSIVE", "POLICY_REPLAY_CONTEXT_MISSING_OR_CONFLICTING", {}
     context = contexts[0]
+    if not isinstance(context, dict):
+        return "INCONCLUSIVE", "POLICY_REPLAY_CONTEXT_MISSING", {}
     if context.get("schema_version") != "jamp2-policy-gate-replay-v1":
         return "INCONCLUSIVE", "POLICY_REPLAY_CONTEXT_VERSION_UNSUPPORTED", {}
 
