@@ -153,11 +153,6 @@ def test_moex_without_confirmed_calendar_is_ambiguous_and_blocked():
     source = SourceSpec("moex", "moex.iss", "iss.moex.com", "moex-iss-adapter-v1")
     claim = _claim("equity_security", "SBER", "RUB")
     outcome = _outcome(source, "SBER", quote="RUB", price_type="LAST_DEAL", calendar=None)
-    capture = dict(outcome.raw_evidence[0])
-    capture["provider_observed_at"] = None
-    capture["provider_observed_at_status"] = "UNVERIFIED_SOURCE_CONTRACT"
-    capture["provider_observed_at_raw"] = "18:45:00"
-    outcome = replace(outcome, raw_evidence=[capture])
     result = arbitrate_from_evidence(
         claim,
         _policy(source, asset="equity_security", identifier="SBER", quote="RUB",
@@ -168,7 +163,6 @@ def test_moex_without_confirmed_calendar_is_ambiguous_and_blocked():
     )
     assert result.verdict_status == "AMBIGUOUS"
     assert "SOURCE_MARKET_CALENDAR_UNCONFIRMED" in result.reason_codes
-    assert "SOURCE_TIMESTAMP_OR_BODY_INCOMPLETE" in result.reason_codes
     assert "ERR_QUORUM_NOT_MET" in result.reason_codes
     assert result.reducer["status"] == "POLICY_GATE_BLOCKED"
 
@@ -650,3 +644,28 @@ def test_arbitration_rejects_non_string_source_date_capture():
             records,
             expected_claim_id="claim-offline",
         )
+
+
+
+def test_moex_unverified_systime_blocks_freshness_even_when_calendar_is_valid():
+    source = SourceSpec("moex", "moex.iss", "iss.moex.com", "moex-iss-adapter-v1")
+    claim = _claim("equity_security", "SBER", "RUB")
+    outcome = _outcome(source, "SBER", quote="RUB", price_type="LAST_DEAL", calendar=True)
+    capture = dict(outcome.raw_evidence[0])
+    capture["provider_observed_at"] = None
+    capture["provider_observed_at_status"] = "UNVERIFIED_SOURCE_CONTRACT"
+    capture["provider_observed_at_raw"] = "18:45:00"
+    outcome = replace(outcome, raw_evidence=[capture])
+
+    result = arbitrate_from_evidence(
+        claim,
+        _policy(source, asset="equity_security", identifier="SBER", quote="RUB",
+                price_type="LAST_DEAL", calendar_required=True),
+        (outcome,),
+        _evidence_records((outcome,), claim),
+        expected_claim_id="claim-offline",
+    )
+
+    assert result.verdict_status == "AMBIGUOUS"
+    assert "SOURCE_TIMESTAMP_OR_BODY_INCOMPLETE" in result.reason_codes
+    assert result.reducer["status"] == "POLICY_GATE_BLOCKED"

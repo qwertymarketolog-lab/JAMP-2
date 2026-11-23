@@ -260,7 +260,7 @@ def test_coingecko_last_updated_at_parser_is_explicit_and_fail_closed():
 
             assert capture["provider_observed_at_status"] == expected_status
             assert capture.get("provider_observed_at") == expected_observed
-            assert "include_last_updated_at=true" in mock_open.call_args.args[0]
+            assert "include_last_updated_at=true" in mock_open.call_args.args[0].full_url
             if case not in {"missing", "null"}:
                 expected_raw = "inf" if case == "non_finite" else timestamp
                 assert capture["provider_observed_at_raw"] == expected_raw
