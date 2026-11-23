@@ -14,6 +14,7 @@ import httpx
 import pytest
 
 from jamp2.api.app import create_app
+from jamp2.api.routes import _evidence_record
 from jamp2.domain.claim import NormalizedClaim
 from jamp2.evidence.digest import compute_record_hash
 from jamp2.evidence.model import EvidenceRecord
@@ -531,3 +532,40 @@ def test_missing_provider_observation_time_blocks_conflict_reducer(monkeypatch: 
     assert result.reducer["status"] == "POLICY_GATE_BLOCKED"
     assert result.outcomes[0].status == "E4_VERIFIED"
     assert result.reason_codes == ("EVIDENCE_LEDGER_REQUIRED",)
+
+
+
+def test_capture_metadata_diagnostics_are_persisted_with_v2_evidence():
+    raw = b'{"last":300}'
+    fetched_at = datetime.now(UTC)
+    record = _evidence_record(
+        claim_id="claim-metadata",
+        provider_id="moex.iss",
+        allowed_host="iss.moex.com",
+        adapter_version="moex-iss-adapter-v1",
+        observation={
+            "source": "moex.iss",
+            "url": "https://iss.moex.com/iss/marketdata",
+            "status_code": 200,
+            "body_complete": True,
+            "raw_body_base64": base64.b64encode(raw).decode("ascii"),
+            "sha256_body": hashlib.sha256(raw).hexdigest(),
+            "fetched_at": fetched_at.isoformat(),
+            "provider_observed_at": None,
+            "provider_observed_at_status": "UNVERIFIED_SOURCE_CONTRACT",
+            "provider_observed_at_raw": "18:45:00",
+            "source_date": "2026-11-22",
+            "source_date_status": "VALID",
+        },
+        parsed_value={"provider_result": {"observed_last": 300}},
+        verdict_status="SOURCE_RESPONSE_CAPTURED",
+    )
+
+    diagnostics = record.parsed_value["capture_metadata_diagnostics"]
+    assert record.provider_observed_at is None
+    assert diagnostics["provider_observed_at"] == {
+        "status": "UNVERIFIED_SOURCE_CONTRACT",
+        "raw": "18:45:00",
+    }
+    assert diagnostics["source_date"] == {"status": "VALID"}
+    assert diagnostics["fetched_at"] == {"status": "VALID"}

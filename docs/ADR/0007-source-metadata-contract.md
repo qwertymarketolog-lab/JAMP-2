@@ -33,10 +33,25 @@ columns and therefore is not a preservation mechanism for v2-only metadata.
 
 ## Provider rules
 
-- MOEX timestamps are interpreted in Europe/Moscow. `SYSTIME` is optional;
-  absent or unparseable `SYSTIME` means unknown observation time, not a guessed
-  timestamp. `TRADEDATE` is retained as `source_date`.
-- CoinGecko requests `include_last_updated_at=true`; its provider timestamp is
-  parsed as UTC. A missing upstream timestamp remains unknown.
+- MOEX ISS securities `marketdata.SYSTIME` is retained as raw source data only.
+  The public ISS overview and consulted field references do not establish its
+  format or timezone for the exact shares/securities endpoint used here.
+  JAMP MUST NOT combine a time-only value with `TRADEDATE`, attach
+  `Europe/Moscow`, or parse an ISO-looking value as an upstream timestamp
+  without an authoritative field-level contract for this endpoint. The raw
+  value and diagnostic status are retained; `provider_observed_at` remains
+  unknown and the freshness gate blocks the source. `TRADEDATE` is retained
+  as `source_date` only after strict `YYYY-MM-DD` calendar validation.
+  MOEX ISS overview: https://www.moex.com/a8531.
+  The separate FutOI ISS description identifies its own `SYSTIME` as
+  publication time and shows a time-only sample, but that contract is specific
+  to the FutOI endpoint and is not transferable to securities marketdata:
+  https://fs.moex.com/f/12828/data-description-en.pdf.
+- CoinGecko `/simple/price` requests `include_last_updated_at=true`.
+  The documented `last_updated_at` value is a UNIX timestamp in seconds and
+  is parsed only as a finite numeric timestamp, converted to UTC. Missing,
+  wrong-type, non-finite, or out-of-range values remain unknown with explicit
+  diagnostics; no receipt-time substitution is permitted.
+  API contract: https://docs.coingecko.com/reference/simple-price.
 - Production MOEX without a confirmed market calendar is not reducer-eligible
   and cannot be upgraded by fabricating `market_calendar_valid=True`.

@@ -7,7 +7,7 @@
     "not_live_market_data": true,
     "not_suitable_for_freshness_or_market_truth_claims": true,
     "created_for_review_against": "JAMP-2 ADR-0007",
-    "schema_note": "MOEX ISS table envelope (columns + positional data rows); SYSTIME is represented as a time-of-day string and must be combined with TRADEDATE only if the provider contract confirms that interpretation."
+    "schema_note": "SYNTHETIC MOEX ISS table envelope (columns + positional data rows); SYSTIME is preserved raw only. No provider_observed_at or timezone is inferred for the securities marketdata endpoint without an authoritative field-level contract."
   },
   "marketdata": {
     "columns": [

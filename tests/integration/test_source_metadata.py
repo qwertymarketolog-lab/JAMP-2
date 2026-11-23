@@ -153,6 +153,11 @@ def test_moex_without_confirmed_calendar_is_ambiguous_and_blocked():
     source = SourceSpec("moex", "moex.iss", "iss.moex.com", "moex-iss-adapter-v1")
     claim = _claim("equity_security", "SBER", "RUB")
     outcome = _outcome(source, "SBER", quote="RUB", price_type="LAST_DEAL", calendar=None)
+    capture = dict(outcome.raw_evidence[0])
+    capture["provider_observed_at"] = None
+    capture["provider_observed_at_status"] = "UNVERIFIED_SOURCE_CONTRACT"
+    capture["provider_observed_at_raw"] = "18:45:00"
+    outcome = replace(outcome, raw_evidence=[capture])
     result = arbitrate_from_evidence(
         claim,
         _policy(source, asset="equity_security", identifier="SBER", quote="RUB",
@@ -163,6 +168,7 @@ def test_moex_without_confirmed_calendar_is_ambiguous_and_blocked():
     )
     assert result.verdict_status == "AMBIGUOUS"
     assert "SOURCE_MARKET_CALENDAR_UNCONFIRMED" in result.reason_codes
+    assert "SOURCE_TIMESTAMP_OR_BODY_INCOMPLETE" in result.reason_codes
     assert "ERR_QUORUM_NOT_MET" in result.reason_codes
     assert result.reducer["status"] == "POLICY_GATE_BLOCKED"
 
@@ -424,23 +430,79 @@ def test_v2_evidence_hash_binds_source_capture_metadata():
 
 
 
-def test_moex_systime_is_optional_and_uses_moscow_timezone_when_full_timestamp():
-    no_time = _moex_capture_metadata({
+@pytest.mark.parametrize(
+    "systime",
+    [
+        "18:45:00",
+        "2026-11-22T13:00:00",
+        "2026-11-22T13:00:00+03:00",
+        "not-a-time",
+    ],
+)
+def test_moex_systime_is_preserved_but_not_interpreted_without_endpoint_contract(
+    systime: str,
+) -> None:
+    metadata = _moex_capture_metadata({
+        "marketdata": {
+            "columns": ["TRADEDATE", "SYSTIME"],
+            "data": [["2026-11-22", systime]],
+        }
+    })
+
+    assert metadata["source_date"] == "2026-11-22"
+    assert metadata["source_date_status"] == "VALID"
+    assert metadata["provider_observed_at"] is None
+    assert metadata["provider_observed_at_status"] == "UNVERIFIED_SOURCE_CONTRACT"
+    assert metadata["provider_observed_at_raw"] == systime
+
+
+def test_moex_systime_missing_and_wrong_type_are_explicit() -> None:
+    missing = _moex_capture_metadata({
         "marketdata": {
             "columns": ["TRADEDATE", "SYSTIME"],
             "data": [["2026-11-22", None]],
         }
     })
-    assert no_time == {"source_date": "2026-11-22"}
-
-    with_time = _moex_capture_metadata({
+    wrong_type = _moex_capture_metadata({
         "marketdata": {
             "columns": ["TRADEDATE", "SYSTIME"],
-            "data": [["2026-11-22", "2026-11-22T13:00:00"]],
+            "data": [["2026-11-22", 184500]],
         }
     })
-    assert with_time["source_date"] == "2026-11-22"
-    assert with_time["provider_observed_at"] == "2026-11-22T10:00:00+00:00"
+
+    assert missing["provider_observed_at"] is None
+    assert missing["provider_observed_at_status"] == "MISSING"
+    assert wrong_type["provider_observed_at"] is None
+    assert wrong_type["provider_observed_at_status"] == "INVALID_TYPE"
+    assert wrong_type["provider_observed_at_raw"] == 184500
+
+
+@pytest.mark.parametrize(
+    ("trade_date", "expected_status"),
+    [
+        ("2026-11-22", "VALID"),
+        ("2026-02-30", "INVALID_CALENDAR_DATE"),
+        ("2026/11/22", "INVALID_FORMAT"),
+        (None, "MISSING"),
+        (20261122, "INVALID_TYPE"),
+    ],
+)
+def test_moex_trade_date_requires_a_real_iso_calendar_date(
+    trade_date: object,
+    expected_status: str,
+) -> None:
+    metadata = _moex_capture_metadata({
+        "marketdata": {
+            "columns": ["TRADEDATE", "SYSTIME"],
+            "data": [[trade_date, None]],
+        }
+    })
+
+    assert metadata["source_date_status"] == expected_status
+    if expected_status == "VALID":
+        assert metadata["source_date"] == "2026-11-22"
+    else:
+        assert "source_date" not in metadata
 
 
 

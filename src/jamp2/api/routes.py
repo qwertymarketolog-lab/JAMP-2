@@ -134,6 +134,31 @@ def _capture_datetime(value: object) -> datetime | None:
     return parsed.astimezone(UTC)
 
 
+def _capture_metadata_diagnostics(observation: dict[str, Any]) -> dict[str, Any]:
+    diagnostics: dict[str, Any] = {}
+    for field_name in ("fetched_at", "provider_observed_at", "source_date"):
+        raw_value = observation.get(field_name)
+        explicit_status = observation.get(f"{field_name}_status")
+        if isinstance(explicit_status, str):
+            status = explicit_status
+        elif raw_value is None:
+            status = "MISSING"
+        elif field_name == "source_date":
+            status = "VALID"
+        elif _capture_datetime(raw_value) is None:
+            status = "INVALID_FORMAT"
+        else:
+            status = "VALID"
+        item: dict[str, Any] = {"status": status}
+        diagnostic_raw = observation.get(f"{field_name}_raw")
+        if diagnostic_raw is None and status != "VALID":
+            diagnostic_raw = raw_value
+        if diagnostic_raw is not None:
+            item["raw"] = diagnostic_raw
+        diagnostics[field_name] = item
+    return diagnostics
+
+
 def _evidence_record(
     *,
     claim_id: str,
@@ -172,6 +197,10 @@ def _evidence_record(
     if source_date_value is not None and not isinstance(source_date_value, str):
         raise IntegrityViolation("provider source_date must be a string or null")
     source_date = source_date_value
+    parsed_value_with_diagnostics = {
+        **parsed_value,
+        "capture_metadata_diagnostics": _capture_metadata_diagnostics(observation),
+    }
     if not hmac.compare_digest(actual_digest, source_digest):
         raise IntegrityViolation("provider raw response digest mismatch")
     if source != provider_id:
@@ -185,7 +214,7 @@ def _evidence_record(
         raw_body_bytes=raw_body,
         raw_sha256=actual_digest,
         captured_at_utc=datetime.now(UTC),
-        parsed_value=parsed_value,
+        parsed_value=parsed_value_with_diagnostics,
         verdict_status=verdict_status,
         parent_hash=None,
         source_timestamp=None,

@@ -96,20 +96,29 @@ def _get_json(
         candidates = [payload, *(value for value in payload.values() if isinstance(value, dict))]
         timestamp = next(
             (item.get("last_updated_at") for item in candidates
-             if item.get("last_updated_at") is not None),
+             if "last_updated_at" in item),
             None,
         )
-        try:
-            if isinstance(timestamp, (int, float)) and not isinstance(timestamp, bool):
-                capture["provider_observed_at"] = datetime.fromtimestamp(
-                    timestamp, UTC
-                ).isoformat()
-            elif isinstance(timestamp, str):
-                observed = datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
-                if observed.tzinfo is not None and observed.utcoffset() is not None:
-                    capture["provider_observed_at"] = observed.astimezone(UTC).isoformat()
-        except (ValueError, OverflowError, OSError):
-            pass
+        capture["provider_observed_at_raw"] = (
+            repr(timestamp)
+            if isinstance(timestamp, float) and not math.isfinite(timestamp)
+            else timestamp
+        )
+        if timestamp is None:
+            capture["provider_observed_at_status"] = "MISSING"
+        elif isinstance(timestamp, bool) or not isinstance(timestamp, (int, float)):
+            capture["provider_observed_at_status"] = "INVALID_TYPE"
+        else:
+            try:
+                numeric_timestamp = float(timestamp)
+                if not math.isfinite(numeric_timestamp):
+                    capture["provider_observed_at_status"] = "NON_FINITE"
+                else:
+                    observed = datetime.fromtimestamp(numeric_timestamp, UTC)
+                    capture["provider_observed_at"] = observed.isoformat()
+                    capture["provider_observed_at_status"] = "VALID"
+            except (ValueError, OverflowError, OSError):
+                capture["provider_observed_at_status"] = "OUT_OF_RANGE"
     if raw_evidence is None:
         with _LOCK:
             _CACHE[url] = (time.monotonic(), payload)
