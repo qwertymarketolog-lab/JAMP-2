@@ -363,7 +363,11 @@ def replay_verdict(
             "claim_id": verdict.claim_id,
             "original_status": verdict.status,
             "replay_status": status,
-            "matches_original": status == verdict.status,
+            "reason_codes_match": reducer.get("reason_codes") == list(verdict.reason_codes),
+            "matches_original": (
+                status == verdict.status
+                and reducer.get("reason_codes") == list(verdict.reason_codes)
+            ),
             "reason_code": reason,
             "reducer": reducer,
             "replay_scope": "POLICY_GATE_AND_REDUCER",
