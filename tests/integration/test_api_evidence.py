@@ -470,10 +470,15 @@ def test_api_multi_source_conflict_is_persisted_and_replayed_from_postgres() -> 
             replay_body = replay.json()
             assert replay_body["replay_status"] == "AMBIGUOUS"
             assert replay_body["matches_original"] is True
-            assert replay_body["reason_code"] == "MULTI_SOURCE_CONFLICT_REPRODUCED"
-            assert replay_body["replay_scope"] == "REDUCER_ONLY"
-            assert replay_body["policy_gate_revalidated"] is False
+            assert replay_body["reason_code"] == "POLICY_GATE_AND_REDUCER_REPLAYED"
+            assert replay_body["replay_scope"] == "POLICY_GATE_AND_REDUCER"
+            assert replay_body["policy_gate_revalidated"] is True
+            assert replay_body["reducer"]["status"] == "AMBIGUOUS"
             assert replay_body["reducer"]["usable_observation_count"] == 2
+            assert {
+                item["provider_id"]: item["observation_status"]
+                for item in replay_body["reducer"]["policy_gate_observations"]
+            } == {"source-a": "VALID", "source-b": "VALID"}
             assert replay_body["network_calls"] == 0
             assert source_a.calls == 1
             assert source_b.calls == 1
