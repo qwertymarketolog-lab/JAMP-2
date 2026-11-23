@@ -27,7 +27,6 @@ pytestmark = pytest.mark.skipif(
     reason="DATABASE_URL is required for API integration tests",
 )
 
-
 class StubProvider:
     """Deterministic adapter fixture; HTTP transport is tested separately."""
 
@@ -74,7 +73,6 @@ class StubProvider:
             ],
         )
 
-
 def claim_payload() -> dict[str, object]:
     return {
         "text": "SBER share price is 300 RUB",
@@ -83,7 +81,6 @@ def claim_payload() -> dict[str, object]:
         "expected_value": 300,
         "unit": "RUB",
     }
-
 
 async def reset_ledger(ledger: PostgresLedger) -> None:
     async with ledger.engine.begin() as connection:
@@ -96,7 +93,6 @@ async def reset_ledger(ledger: PostgresLedger) -> None:
         finally:
             await connection.execute(text("ALTER TABLE evidence ENABLE TRIGGER USER"))
             await connection.execute(text("ALTER TABLE verdicts ENABLE TRIGGER USER"))
-
 
 def test_api_server_verifies_claim_persists_raw_evidence_and_reads_it() -> None:
     async def run() -> None:
@@ -173,7 +169,6 @@ def test_api_server_verifies_claim_persists_raw_evidence_and_reads_it() -> None:
 
     asyncio.run(run())
 
-
 def test_api_returns_503_when_ledger_is_unavailable() -> None:
     class UnavailableLedger:
         async def append(self, record: EvidenceRecord) -> EvidenceRecord:
@@ -195,7 +190,6 @@ def test_api_returns_503_when_ledger_is_unavailable() -> None:
             assert response.json() == {"error": "LEDGER_UNAVAILABLE"}
 
     asyncio.run(run())
-
 
 def test_api_returns_500_on_integrity_violation() -> None:
     async def run() -> None:
@@ -237,7 +231,6 @@ def test_api_returns_500_on_integrity_violation() -> None:
         await ledger.close()
 
     asyncio.run(run())
-
 
 def test_partial_multi_source_timeout_is_ambiguous_in_postgres_ledger() -> None:
     class FixedProvider:
@@ -324,8 +317,6 @@ def test_partial_multi_source_timeout_is_ambiguous_in_postgres_ledger() -> None:
         await ledger.close()
 
     asyncio.run(run())
-
-
 
 def test_api_multi_source_conflict_is_persisted_and_replayed_from_postgres() -> None:
     class PriceProvider:
@@ -453,10 +444,11 @@ def test_api_multi_source_conflict_is_persisted_and_replayed_from_postgres() -> 
                 assert row["raw_sha256"] == compute_sha256(raw)
                 assert row["body_complete"] is True
                 assert row["parsed_value"]["provider_result"]["quote_currency"] == "USD"
-            assert {row["parsed_value"]["provider_result"]["observed_last"] for row in evidence_rows} == {
-                100.0,
-                105.0,
+            observed_values = {
+                row["parsed_value"]["provider_result"]["observed_last"]
+                for row in evidence_rows
             }
+            assert observed_values == {100.0, 105.0}
 
             verdict_response = await client.get(f"/v1/verdicts/{body['verdict_id']}")
             assert verdict_response.status_code == 200
