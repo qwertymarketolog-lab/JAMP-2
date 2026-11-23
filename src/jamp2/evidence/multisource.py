@@ -210,6 +210,7 @@ def _parse_capture_time(value: object) -> datetime | None:
 
 def _verified_source_records(
     claim: NormalizedClaim,
+    expected_claim_id: str,
     outcomes: tuple[SourceOutcome, ...],
     evidence_records: Sequence[EvidenceRecord],
 ) -> dict[str, tuple[EvidenceRecord, ...]]:
@@ -217,22 +218,24 @@ def _verified_source_records(
     if not evidence_records:
         raise IntegrityViolation("evidence ledger records are required for arbitration")
 
+    if not isinstance(expected_claim_id, str) or not expected_claim_id.strip():
+        raise IntegrityViolation("expected claim_id is required for arbitration")
+
     evidence_ids: set[str] = set()
-    claim_ids: set[str] = set()
     for record in evidence_records:
         if record.evidence_id in evidence_ids:
             raise IntegrityViolation("duplicate evidence_id in arbitration input")
         evidence_ids.add(record.evidence_id)
-        claim_ids.add(record.claim_id)
+        if record.claim_id != expected_claim_id:
+            raise IntegrityViolation(
+                "arbitration evidence claim_id does not match the expected claim"
+            )
         if not record.record_hash or not hmac.compare_digest(
             compute_record_hash(record), record.record_hash
         ):
             raise IntegrityViolation("evidence record_hash is missing or invalid")
         if not hmac.compare_digest(compute_sha256(record.raw_body_bytes), record.raw_sha256):
             raise IntegrityViolation("evidence raw_sha256 is invalid")
-    if len(claim_ids) != 1:
-        raise IntegrityViolation("arbitration evidence must belong to exactly one claim")
-
     unused = {record.evidence_id: record for record in evidence_records}
     by_source: dict[str, tuple[EvidenceRecord, ...]] = {}
     for outcome in outcomes:
@@ -356,13 +359,17 @@ def arbitrate_from_evidence(
     policy: MultiSourcePolicy,
     outcomes: tuple[SourceOutcome, ...],
     evidence_records: Sequence[EvidenceRecord],
+    *,
+    expected_claim_id: str,
 ) -> ArbitrationResult:
     """Apply policy only to provider outcomes proven against persisted ledger records."""
     expected_ids = tuple(source.provider_id for source in policy.required_sources)
     actual_ids = tuple(outcome.source.provider_id for outcome in outcomes)
     if actual_ids != expected_ids:
         raise ValueError("outcomes must contain every required source in policy order")
-    records_by_source = _verified_source_records(claim, outcomes, evidence_records)
+    records_by_source = _verified_source_records(
+        claim, expected_claim_id, outcomes, evidence_records
+    )
 
     source_policy = _source_policy(claim, policy)
     policy_inputs: list[SourceObservationInput] = []

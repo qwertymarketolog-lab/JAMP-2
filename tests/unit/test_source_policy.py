@@ -1,5 +1,6 @@
 """Deterministic tests for Source Policy v1.1 eligibility rules."""
 
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 
 import pytest
@@ -229,3 +230,15 @@ def test_per_source_ttl_must_be_positive():
             independence_group="ttl", max_age_seconds=60, max_time_skew_seconds=0,
             verification_mode="SINGLE_SOURCE", max_age_by_source={"a": 0},
         )
+
+
+
+def test_per_source_ttl_mapping_is_immutable_and_detached_from_input():
+    supplied_ttls = {"a": 10}
+    source_policy = replace(policy("SINGLE_SOURCE"), max_age_by_source=supplied_ttls)
+
+    supplied_ttls["a"] = 20
+    assert source_policy.max_age_by_source["a"] == 10
+
+    with pytest.raises(TypeError):
+        source_policy.max_age_by_source["a"] = 30

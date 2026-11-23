@@ -69,7 +69,8 @@ def _outcome(source: SourceSpec, identifier: str, *, quote: str,
 
 
 def _evidence_records(
-    outcomes: tuple[SourceOutcome, ...], claim: NormalizedClaim
+    outcomes: tuple[SourceOutcome, ...], claim: NormalizedClaim,
+    *, claim_id: str = "claim-offline",
 ) -> tuple[EvidenceRecord, ...]:
     records: list[EvidenceRecord] = []
     for outcome in outcomes:
@@ -79,7 +80,7 @@ def _evidence_records(
             observed_at = datetime.fromisoformat(capture["provider_observed_at"])
             record = EvidenceRecord(
                 evidence_id=f"evidence-{outcome.source.provider_id}",
-                claim_id="claim-offline",
+                claim_id=claim_id,
                 provider=outcome.source.provider_id,
                 url=capture["url"],
                 http_status=capture["status_code"],
@@ -138,6 +139,7 @@ def test_moex_without_confirmed_calendar_is_ambiguous_and_blocked():
     outcome = _outcome(source, "SBER", quote="RUB", price_type="LAST_DEAL", calendar=None)
     result = arbitrate_from_evidence(
         claim,
+        expected_claim_id="claim-offline",
         _policy(source, asset="equity_security", identifier="SBER", quote="RUB",
                 price_type="LAST_DEAL", calendar_required=True),
         (outcome,),
@@ -156,6 +158,7 @@ def test_fresh_coingecko_source_is_verified_without_network():
     outcome = _outcome(source, "bitcoin", quote="USD", price_type="SPOT", calendar=None)
     result = arbitrate_from_evidence(
         claim,
+        expected_claim_id="claim-offline",
         _policy(source, asset="crypto_asset", identifier="bitcoin", quote="USD",
                 price_type="SPOT", calendar_required=False),
         (outcome,),
@@ -173,6 +176,7 @@ def test_arbitration_refuses_empty_ledger_evidence():
     with pytest.raises(IntegrityViolation, match="ledger records are required"):
         arbitrate_from_evidence(
             claim,
+            expected_claim_id="claim-offline",
             _policy(source, asset="crypto_asset", identifier="bitcoin", quote="USD",
                     price_type="SPOT", calendar_required=False),
             (outcome,),
@@ -189,6 +193,7 @@ def test_arbitration_rejects_tampered_record_hash():
     with pytest.raises(IntegrityViolation, match="record_hash is missing or invalid"):
         arbitrate_from_evidence(
             claim,
+            expected_claim_id="claim-offline",
             _policy(source, asset="crypto_asset", identifier="bitcoin", quote="USD",
                     price_type="SPOT", calendar_required=False),
             (outcome,),
@@ -205,6 +210,7 @@ def test_arbitration_rejects_outcome_not_matching_ledger_payload():
     with pytest.raises(IntegrityViolation, match="does not match exactly one persisted"):
         arbitrate_from_evidence(
             claim,
+            expected_claim_id="claim-offline",
             _policy(source, asset="crypto_asset", identifier="bitcoin", quote="USD",
                     price_type="SPOT", calendar_required=False),
             (changed,),
@@ -220,6 +226,7 @@ def test_stale_coingecko_source_is_ambiguous_not_inconclusive():
     )
     result = arbitrate_from_evidence(
         claim,
+        expected_claim_id="claim-offline",
         _policy(source, asset="crypto_asset", identifier="bitcoin", quote="USD",
                 price_type="SPOT", calendar_required=False),
         (outcome,),
@@ -418,3 +425,45 @@ def test_moex_systime_is_optional_and_uses_moscow_timezone_when_full_timestamp()
     })
     assert with_time["source_date"] == "2026-11-22"
     assert with_time["provider_observed_at"] == "2026-11-22T10:00:00+00:00"
+
+
+
+def test_arbitration_rejects_evidence_from_another_claim_even_when_payload_matches():
+    source = SourceSpec("coingecko", "coingecko", "api.coingecko.com", "coingecko-adapter-v1")
+    claim = _claim("crypto_asset", "bitcoin", "USD")
+    outcome = _outcome(source, "bitcoin", quote="USD", price_type="SPOT", calendar=None)
+    foreign_records = _evidence_records((outcome,), claim, claim_id="claim-B")
+
+    with pytest.raises(IntegrityViolation, match="claim_id does not match"):
+        arbitrate_from_evidence(
+            claim,
+            _policy(source, asset="crypto_asset", identifier="bitcoin", quote="USD",
+                    price_type="SPOT", calendar_required=False),
+            (outcome,),
+            foreign_records,
+            expected_claim_id="claim-A",
+        )
+
+
+def test_arbitration_rejects_mixed_claim_ids_even_when_payload_matches():
+    source = SourceSpec("coingecko", "coingecko", "api.coingecko.com", "coingecko-adapter-v1")
+    claim = _claim("crypto_asset", "bitcoin", "USD")
+    outcome = _outcome(source, "bitcoin", quote="USD", price_type="SPOT", calendar=None)
+    own_record = _evidence_records((outcome,), claim, claim_id="claim-A")[0]
+    foreign_record = _evidence_records((outcome,), claim, claim_id="claim-B")[0]
+    foreign_record = replace(
+        foreign_record, evidence_id="evidence-foreign", record_hash=None
+    )
+    foreign_record = replace(
+        foreign_record, record_hash=compute_record_hash(foreign_record)
+    )
+
+    with pytest.raises(IntegrityViolation, match="claim_id does not match"):
+        arbitrate_from_evidence(
+            claim,
+            _policy(source, asset="crypto_asset", identifier="bitcoin", quote="USD",
+                    price_type="SPOT", calendar_required=False),
+            (outcome,),
+            (own_record, foreign_record),
+            expected_claim_id="claim-A",
+        )

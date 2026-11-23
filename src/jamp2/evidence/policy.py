@@ -10,6 +10,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
+from types import MappingProxyType
 from typing import Literal
 
 from jamp2.evidence.reason_codes import (
@@ -164,6 +165,9 @@ class SourcePolicyRecord:
             raise ValueError("max_age_by_source values must be positive integer seconds")
         if any(provider not in self.required_sources for provider in self.max_age_by_source):
             raise ValueError("max_age_by_source contains a non-required source")
+        object.__setattr__(
+            self, "max_age_by_source", MappingProxyType(dict(self.max_age_by_source))
+        )
         if self.timeout_seconds <= 0:
             raise ValueError("timeout_seconds must be positive")
         provenance_ids = [item.provider_id for item in self.provenance]
