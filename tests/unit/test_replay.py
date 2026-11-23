@@ -296,7 +296,7 @@ def test_multi_source_replay_reduces_persisted_conflicting_observations() -> Non
     assert result["network_calls"] == 0
 
 
-def test_multi_source_replay_fails_closed_when_conflict_is_not_reproduced() -> None:
+def test_multi_source_replay_detects_when_original_conflict_is_not_reproduced() -> None:
     claim = claim_snapshot(unit="USD")
     replay_context = multi_source_replay_context()
     observed_at = datetime(2026, 11, 20, 0, 0, tzinfo=UTC)
