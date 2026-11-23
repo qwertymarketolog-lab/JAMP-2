@@ -1,2 +1,2 @@
 def test_ruleset_enforcement_probe():
-    assert False, "Intentional failure: verify required CI blocks merge"
+    raise AssertionError("Intentional failure: verify required CI blocks merge")
