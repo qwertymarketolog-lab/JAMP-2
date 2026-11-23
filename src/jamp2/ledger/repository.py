@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
+
 from jamp2.evidence.digest import compute_record_hash, compute_sha256
-from jamp2.evidence.model import EvidenceRecord
+from jamp2.evidence.model import EvidenceRecord, IntegrityViolation
 
 
 class InMemoryLedger:
@@ -24,19 +26,24 @@ class InMemoryLedger:
         )
         if record.parent_hash != expected_parent:
             raise ValueError("parent_hash does not match the current ledger tip")
-        self._records.append(record)
+        persisted = replace(record, record_hash=compute_record_hash(record))
+        self._records.append(persisted)
         self._evidence_ids.add(record.evidence_id)
-        return record
+        return persisted
 
     def get(self, evidence_id: str) -> EvidenceRecord | None:
-        """Return one record by its unique evidence identifier."""
+        """Return one record only when the complete in-memory chain verifies."""
+        if not self.verify_chain():
+            raise IntegrityViolation("evidence hash chain verification failed")
         for record in self._records:
             if record.evidence_id == evidence_id:
                 return record
         return None
 
     def list_by_claim(self, claim_id: str) -> list[EvidenceRecord]:
-        """Return records for a claim in append order."""
+        """Return claim records only when the complete in-memory chain verifies."""
+        if not self.verify_chain():
+            raise IntegrityViolation("evidence hash chain verification failed")
         return [record for record in self._records if record.claim_id == claim_id]
 
     def verify_chain(self) -> bool:
@@ -47,6 +54,8 @@ class InMemoryLedger:
             if record.evidence_id in seen_ids:
                 return False
             if compute_sha256(record.raw_body_bytes) != record.raw_sha256:
+                return False
+            if record.record_hash is None or compute_record_hash(record) != record.record_hash:
                 return False
             if record.parent_hash != expected_parent:
                 return False

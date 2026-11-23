@@ -16,6 +16,8 @@ from alembic.config import Config
 from sqlalchemy.engine import URL, make_url
 
 from alembic import command
+from jamp2.evidence.digest import compute_record_hash, compute_sha256
+from jamp2.evidence.model import EvidenceRecord
 
 DATABASE_URL = os.getenv("DATABASE_URL")
 pytestmark = pytest.mark.skipif(
@@ -269,7 +271,7 @@ def test_006_truncate_protection_upgrade_and_downgrade(
     config, database_url = migration_database
     command.upgrade(config, "head")
 
-    assert asyncio.run(_current_revision(database_url)) == "007_pending_lease"
+    assert asyncio.run(_current_revision(database_url)) == "008_source_metadata"
     assert asyncio.run(_trigger_exists(database_url, "evidence", "evidence_no_truncate"))
     assert asyncio.run(_trigger_exists(database_url, "verdicts", "verdicts_no_truncate"))
     assert asyncio.run(_truncate_function_exists(database_url))
@@ -305,7 +307,7 @@ def test_downgrade_007_pending_lease(
     """Verify migration 007 downgrades cleanly and removes all new columns."""
     config, database_url = migration_database
     command.upgrade(config, "head")
-    assert asyncio.run(_current_revision(database_url)) == "007_pending_lease"
+    assert asyncio.run(_current_revision(database_url)) == "008_source_metadata"
 
     columns_before = asyncio.run(_idempotency_columns(database_url))
     assert {"owner_token", "lease_expires_at", "attempt_count"} <= columns_before
@@ -317,3 +319,172 @@ def test_downgrade_007_pending_lease(
     assert "owner_token" not in columns_after
     assert "lease_expires_at" not in columns_after
     assert "attempt_count" not in columns_after
+
+
+async def _insert_head_evidence(database_url: URL) -> None:
+    connection = await asyncpg.connect(
+        **_connect_kwargs(database_url, database_url.database or "")
+    )
+    raw_body = b'{"price":100}'
+    try:
+        await connection.execute(
+            """
+            INSERT INTO evidence (
+                evidence_id, claim_id, provider, url, http_status, raw_body_bytes,
+                raw_sha256, captured_at_utc, parsed_value, verdict_status,
+                canonicalization_version, body_complete, provider_adapter_version,
+                parser_version, parent_hash, record_hash
+            )
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10,
+                    $11, $12, $13, $14, $15, $16)
+            """,
+            "evidence-1",
+            "claim-1",
+            "test-provider",
+            "https://example.test/evidence",
+            200,
+            raw_body,
+            hashlib.sha256(raw_body).hexdigest(),
+            datetime.now(UTC),
+            '{"price":100}',
+            "OBSERVATION_CAPTURED",
+            "jamp-json-nfc-v1",
+            True,
+            "provider-adapter-v1",
+            "provider-parser-v1",
+            None,
+            "a" * 64,
+        )
+    finally:
+        await connection.close()
+
+
+async def _insert_head_v2_evidence(database_url: URL) -> None:
+    connection = await asyncpg.connect(
+        **_connect_kwargs(database_url, database_url.database or "")
+    )
+    captured = datetime.now(UTC)
+    raw_body = b'{"price":100}'
+    record = EvidenceRecord(
+        evidence_id="evidence-1",
+        claim_id="claim-1",
+        provider="test-provider",
+        url="https://example.test/evidence",
+        http_status=200,
+        raw_body_bytes=raw_body,
+        raw_sha256=compute_sha256(raw_body),
+        captured_at_utc=captured,
+        parsed_value={"price": 100},
+        verdict_status="OBSERVATION_CAPTURED",
+        parent_hash=None,
+        canonicalization_version="jamp-json-nfc-v1",
+        body_complete=True,
+        provider_adapter_version="provider-adapter-v1",
+        parser_version="provider-parser-v1",
+        hash_schema_version="v2",
+        fetched_at=captured,
+        provider_observed_at=captured,
+        source_date="2026-11-22",
+    )
+    try:
+        await connection.execute(
+            """
+            INSERT INTO evidence (
+                evidence_id, claim_id, provider, url, http_status, raw_body_bytes,
+                raw_sha256, captured_at_utc, parsed_value, verdict_status,
+                canonicalization_version, body_complete, provider_adapter_version,
+                parser_version, parent_hash, record_hash, hash_schema_version,
+                fetched_at, provider_observed_at, source_date
+            )
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10,
+                    $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)
+            """,
+            record.evidence_id,
+            record.claim_id,
+            record.provider,
+            record.url,
+            record.http_status,
+            record.raw_body_bytes,
+            record.raw_sha256,
+            record.captured_at_utc,
+            '{"price":100}',
+            record.verdict_status,
+            record.canonicalization_version,
+            record.body_complete,
+            record.provider_adapter_version,
+            record.parser_version,
+            record.parent_hash,
+            compute_record_hash(record),
+            record.hash_schema_version,
+            record.fetched_at,
+            record.provider_observed_at,
+            record.source_date,
+        )
+    finally:
+        await connection.close()
+
+
+async def _insert_head_v2_verdict(database_url: URL) -> None:
+    connection = await asyncpg.connect(
+        **_connect_kwargs(database_url, database_url.database or "")
+    )
+    try:
+        await connection.execute(
+            """
+            INSERT INTO verdicts (
+                verdict_id, claim_id, status, evidence_ids, policy_id, policy_version,
+                code_version, canonicalization_version, decided_at_utc, reason_codes,
+                explanation, parent_hash, record_hash, verification_mode
+            )
+            VALUES (
+                $1, $2, $3, $4::jsonb, $5, $6, $7, $8, $9, $10::jsonb, $11, $12, $13, $14
+            )
+            """,
+            "verdict-1",
+            "claim-1",
+            "VERIFIED",
+            '["evidence-1"]',
+            "test-policy",
+            "test-v1",
+            "test-code",
+            "jamp-json-nfc-v1",
+            datetime.now(UTC),
+            '["E4_VERIFIED"]',
+            "Test verdict",
+            None,
+            "b" * 64,
+            "SINGLE_SOURCE",
+        )
+    finally:
+        await connection.close()
+
+
+def test_008_downgrade_blocks_populated_v2_metadata_without_data_loss(
+    migration_database: tuple[Config, URL],
+) -> None:
+    config, database_url = migration_database
+    command.upgrade(config, "head")
+    asyncio.run(_insert_head_v2_evidence(database_url))
+    asyncio.run(_insert_head_v2_verdict(database_url))
+
+    with pytest.raises(RuntimeError, match="v2 evidence or verification_mode metadata"):
+        command.downgrade(config, "007_pending_lease")
+
+    assert asyncio.run(_current_revision(database_url)) == "008_source_metadata"
+    assert asyncio.run(_count(database_url, "evidence")) == 1
+    assert asyncio.run(_count(database_url, "verdicts")) == 1
+
+
+def test_008_downgrade_preserves_populated_legacy_v1_rows(
+    migration_database: tuple[Config, URL],
+) -> None:
+    config, database_url = migration_database
+    command.upgrade(config, "head")
+    asyncio.run(_insert_head_evidence(database_url))
+    asyncio.run(_insert_verdict(database_url))
+
+    command.downgrade(config, "007_pending_lease")
+
+    assert asyncio.run(_current_revision(database_url)) == "007_pending_lease"
+    assert asyncio.run(_count(database_url, "evidence")) == 1
+    assert asyncio.run(_count(database_url, "verdicts")) == 1

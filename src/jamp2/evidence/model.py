@@ -2,13 +2,22 @@
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from typing import TypeAlias
 
 JSONValue: TypeAlias = (
     str | int | float | bool | None | list["JSONValue"] | dict[str, "JSONValue"]
 )
+
+
+class LedgerError(Exception):
+    """Base class for evidence ledger failures."""
+
+
+class IntegrityViolation(LedgerError):
+    """Raised when persisted evidence metadata or its integrity contract is invalid."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -31,6 +40,12 @@ class EvidenceRecord:
     body_complete: bool = True
     provider_adapter_version: str = "provider-adapter-v1"
     parser_version: str = "provider-parser-v1"
+    hash_schema_version: str = "v1"
+    fetched_at: datetime | None = None
+    provider_observed_at: datetime | None = None
+    source_date: str | None = None
+    # Populated only by a ledger append/read; excluded from the record hash payload.
+    record_hash: str | None = None
 
     def __post_init__(self) -> None:
         required_strings = (
@@ -66,7 +81,41 @@ class EvidenceRecord:
             or self.captured_at_utc.utcoffset() != timedelta(0)
         ):
             raise ValueError("captured_at_utc must be timezone-aware UTC")
+        if self.hash_schema_version not in {"v1", "v2"}:
+            raise IntegrityViolation("unsupported evidence hash schema version")
+        if self.hash_schema_version == "v1" and any(
+            value is not None
+            for value in (self.fetched_at, self.provider_observed_at, self.source_date)
+        ):
+            raise ValueError("source metadata requires hash_schema_version v2")
+        for field_name, metadata_value in (
+            ("fetched_at", self.fetched_at),
+            ("provider_observed_at", self.provider_observed_at),
+        ):
+            if metadata_value is not None and (
+                not isinstance(metadata_value, datetime)
+                or metadata_value.tzinfo is None
+                or metadata_value.utcoffset() is None
+            ):
+                raise ValueError(f"{field_name} must be timezone-aware or null")
+        if self.source_date is not None:
+            if not isinstance(self.source_date, str) or re.fullmatch(
+                r"\d{4}-\d{2}-\d{2}", self.source_date
+            ) is None:
+                raise IntegrityViolation("source_date must use YYYY-MM-DD format")
+            try:
+                date.fromisoformat(self.source_date)
+            except ValueError as exc:
+                raise IntegrityViolation(
+                    "source_date must be a valid calendar date"
+                ) from exc
         if self.parent_hash is not None and (
             not isinstance(self.parent_hash, str) or not self.parent_hash
         ):
             raise ValueError("parent_hash must be a non-empty hash or null")
+        if self.record_hash is not None and (
+            not isinstance(self.record_hash, str)
+            or len(self.record_hash) != 64
+            or any(character not in "0123456789abcdef" for character in self.record_hash)
+        ):
+            raise IntegrityViolation("record_hash must be a lowercase SHA-256 digest or null")

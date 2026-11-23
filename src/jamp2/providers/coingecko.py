@@ -80,18 +80,45 @@ def _get_json(
                 "sha256_body": hashlib.sha256(body).hexdigest(),
             })
         raise
+    capture = None
     if raw_evidence is not None:
-        raw_evidence.append({
-            "source": "coingecko",
-            "url": url,
-            "status_code": status_code,
-            "body_complete": True,
+        capture = {
+            "source": "coingecko", "url": url, "status_code": status_code,
+            "fetched_at": datetime.now(UTC).isoformat(), "body_complete": True,
             "raw_body_base64": base64.b64encode(body).decode("ascii"),
             "sha256_body": hashlib.sha256(body).hexdigest(),
-        })
+        }
+        raw_evidence.append(capture)
     payload = json.loads(body.decode("utf-8"))
     if not isinstance(payload, dict):
         raise ValueError("CoinGecko response must be a JSON object")
+    if capture is not None:
+        candidates = [payload, *(value for value in payload.values() if isinstance(value, dict))]
+        timestamp = next(
+            (item.get("last_updated_at") for item in candidates
+             if "last_updated_at" in item),
+            None,
+        )
+        capture["provider_observed_at_raw"] = (
+            repr(timestamp)
+            if isinstance(timestamp, float) and not math.isfinite(timestamp)
+            else timestamp
+        )
+        if timestamp is None:
+            capture["provider_observed_at_status"] = "MISSING"
+        elif isinstance(timestamp, bool) or not isinstance(timestamp, (int, float)):
+            capture["provider_observed_at_status"] = "INVALID_TYPE"
+        else:
+            try:
+                numeric_timestamp = float(timestamp)
+                if not math.isfinite(numeric_timestamp):
+                    capture["provider_observed_at_status"] = "NON_FINITE"
+                else:
+                    observed = datetime.fromtimestamp(numeric_timestamp, UTC)
+                    capture["provider_observed_at"] = observed.isoformat()
+                    capture["provider_observed_at_status"] = "VALID"
+            except (ValueError, OverflowError, OSError):
+                capture["provider_observed_at_status"] = "OUT_OF_RANGE"
     if raw_evidence is None:
         with _LOCK:
             _CACHE[url] = (time.monotonic(), payload)
@@ -183,7 +210,11 @@ def _verify_claim_with_coingecko(
         }
 
     if claim_type == "price":
-        params = urllib.parse.urlencode({"ids": normalized_id, "vs_currencies": "usd"})
+        params = urllib.parse.urlencode({
+            "ids": normalized_id,
+            "vs_currencies": "usd",
+            "include_last_updated_at": "true",
+        })
         url = f"{COINGECKO_BASE}/simple/price?{params}"
     else:
         url = _coin_url(normalized_id)

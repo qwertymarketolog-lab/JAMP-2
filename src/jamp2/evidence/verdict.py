@@ -26,6 +26,7 @@ class VerdictRecord:
     reason_codes: tuple[str, ...]
     explanation: str
     parent_hash: str | None = None
+    verification_mode: str | None = None
 
     def __post_init__(self) -> None:
         for field_name in (
@@ -62,6 +63,8 @@ class VerdictRecord:
             or self.decided_at_utc.utcoffset() != timedelta(0)
         ):
             raise ValueError("decided_at_utc must be timezone-aware UTC")
+        if self.verification_mode not in {None, "SINGLE_SOURCE", "MULTI_SOURCE"}:
+            raise ValueError("verification_mode must be SINGLE_SOURCE, MULTI_SOURCE, or null")
         if self.parent_hash is not None and (
             not isinstance(self.parent_hash, str) or not self.parent_hash
         ):

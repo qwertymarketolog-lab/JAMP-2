@@ -6,7 +6,7 @@ import base64
 import hashlib
 
 from jamp2.evidence.canonicalize import canonicalize
-from jamp2.evidence.model import EvidenceRecord, JSONValue
+from jamp2.evidence.model import EvidenceRecord, IntegrityViolation, JSONValue
 from jamp2.evidence.verdict import VerdictRecord
 
 
@@ -35,6 +35,16 @@ def compute_record_hash(record: EvidenceRecord) -> str:
         "provider_adapter_version": record.provider_adapter_version,
         "parser_version": record.parser_version,
     }
+    if record.hash_schema_version == "v2":
+        payload.update({
+            "fetched_at": record.fetched_at.isoformat() if record.fetched_at else None,
+            "provider_observed_at": (
+                record.provider_observed_at.isoformat() if record.provider_observed_at else None
+            ),
+            "source_date": record.source_date,
+        })
+    elif record.hash_schema_version != "v1":
+        raise IntegrityViolation("unsupported evidence hash schema version")
     return compute_sha256(canonicalize(payload))
 
 

@@ -10,10 +10,11 @@ import base64
 import hashlib
 import json
 import math
+import re
 import urllib.error
 import urllib.parse
 import urllib.request
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from typing import Any
 
 from jamp2.domain.claim import Claim as Jamp2Claim
@@ -26,6 +27,67 @@ E4_CONTRADICTED = "E4_CONTRADICTED"
 E4_OUT_OF_SCOPE = "E4_OUT_OF_SCOPE"
 E4_INCONCLUSIVE = "E4_INCONCLUSIVE"
 PRICE_FIELDS = ["LAST", "MARKETPRICE", "MARKETPRICE2"]
+
+
+def _moex_capture_metadata(payload: dict[str, Any]) -> dict[str, Any]:
+    metadata: dict[str, Any] = {"provider_observed_at": None}
+    table = payload.get("marketdata")
+    if not isinstance(table, dict):
+        return {
+            **metadata,
+            "provider_observed_at_status": "TABLE_MISSING",
+            "source_date_status": "TABLE_MISSING",
+        }
+    columns, rows = table.get("columns"), table.get("data")
+    if not isinstance(columns, list) or not isinstance(rows, list):
+        return {
+            **metadata,
+            "provider_observed_at_status": "TABLE_INVALID",
+            "source_date_status": "TABLE_INVALID",
+        }
+
+    for row in rows:
+        if not isinstance(row, list) or len(row) != len(columns):
+            continue
+        values = dict(zip(columns, row, strict=True))
+        trade_date = values.get("TRADEDATE")
+        if trade_date is None:
+            metadata["source_date_status"] = "MISSING"
+        elif not isinstance(trade_date, str):
+            metadata["source_date_status"] = "INVALID_TYPE"
+            metadata["source_date_raw"] = trade_date
+        elif re.fullmatch(r"[0-9]{4}-[0-9]{2}-[0-9]{2}", trade_date) is None:
+            metadata["source_date_status"] = "INVALID_FORMAT"
+            metadata["source_date_raw"] = trade_date
+        else:
+            try:
+                date.fromisoformat(trade_date)
+            except ValueError:
+                metadata["source_date_status"] = "INVALID_CALENDAR_DATE"
+                metadata["source_date_raw"] = trade_date
+            else:
+                metadata["source_date"] = trade_date
+                metadata["source_date_status"] = "VALID"
+
+        systime = values.get("SYSTIME")
+        if systime is None:
+            metadata["provider_observed_at_status"] = "MISSING"
+        elif isinstance(systime, str) and systime.strip():
+            metadata["provider_observed_at_status"] = "UNVERIFIED_SOURCE_CONTRACT"
+            metadata["provider_observed_at_raw"] = systime
+        elif isinstance(systime, str):
+            metadata["provider_observed_at_status"] = "EMPTY"
+            metadata["provider_observed_at_raw"] = systime
+        else:
+            metadata["provider_observed_at_status"] = "INVALID_TYPE"
+            metadata["provider_observed_at_raw"] = systime
+        return metadata
+
+    return {
+        **metadata,
+        "provider_observed_at_status": "NO_VALID_ROW",
+        "source_date_status": "NO_VALID_ROW",
+    }
 
 
 def _get_json(
@@ -48,6 +110,7 @@ def _get_json(
                 "source": "moex.iss",
                 "url": url,
                 "provider_observed_at": None,
+                "provider_observed_at_status": "HTTP_ERROR_NO_SOURCE_TIMESTAMP",
                 "fetched_at": datetime.now(UTC).isoformat(),
                 "status_code": exc.code,
                 "body_complete": True,
@@ -55,18 +118,20 @@ def _get_json(
                 "sha256_body": hashlib.sha256(body).hexdigest(),
             })
         raise
+    capture = None
     if raw_evidence is not None:
-        raw_evidence.append({
-            "source": "moex.iss",
-            "url": url,
-            "status_code": status_code,
-            "body_complete": True,
+        capture = {
+            "source": "moex.iss", "url": url, "status_code": status_code,
+            "fetched_at": datetime.now(UTC).isoformat(), "body_complete": True,
             "raw_body_base64": base64.b64encode(body).decode("ascii"),
             "sha256_body": hashlib.sha256(body).hexdigest(),
-        })
+        }
+        raw_evidence.append(capture)
     payload = json.loads(body.decode("utf-8"))
     if not isinstance(payload, dict):
         raise ValueError("MOEX ISS response must be a JSON object")
+    if capture is not None:
+        capture.update(_moex_capture_metadata(payload))
     return payload
 
 
@@ -246,7 +311,7 @@ def _verify_claim_with_moex(
         {
             "iss.meta": "off",
             "iss.only": "marketdata",
-            "marketdata.columns": "SECID,LAST,MARKETPRICE,MARKETPRICE2,BOARDID,TRADEDATE",
+            "marketdata.columns": "SECID,LAST,MARKETPRICE,MARKETPRICE2,BOARDID,TRADEDATE,SYSTIME",
         }
     )
     price_url = (
@@ -334,6 +399,7 @@ def _verify_claim_with_moex(
         "tolerance": price_tolerance,
         "board_id": latest.get("BOARDID"),
         "trade_date": latest.get("TRADEDATE"),
+        "market_calendar_valid": None,
         **_failure_diagnostics(
             http_status=200,
             securities_columns=securities_columns,

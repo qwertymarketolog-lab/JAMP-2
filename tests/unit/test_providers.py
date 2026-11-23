@@ -3,6 +3,7 @@ import hashlib
 import io
 import json
 import urllib.error
+from datetime import UTC, datetime
 from unittest.mock import MagicMock, patch
 
 from jamp2.domain.claim import Claim, NormalizedClaim
@@ -230,3 +231,39 @@ def test_coingecko_provider_rejects_equity_subject_without_source_call(mock_veri
     result = coingecko.CoinGeckoProvider().verify_claim(claim)
     assert result.status == coingecko.E4_OUT_OF_SCOPE
     mock_verify.assert_not_called()
+
+
+
+def test_coingecko_last_updated_at_parser_is_explicit_and_fail_closed():
+    cases = [
+        ("valid", 1_700_000_000, "VALID", "2023-11-14T22:13:20+00:00"),
+        ("missing", None, "MISSING", None),
+        ("null", None, "MISSING", None),
+        ("string", "1700000000", "INVALID_TYPE", None),
+        ("naive_iso", "2026-11-22T10:00:00", "INVALID_TYPE", None),
+        ("aware_iso", "2026-11-22T10:00:00+03:00", "INVALID_TYPE", None),
+        ("boolean", True, "INVALID_TYPE", None),
+        ("out_of_range", 1e100, "OUT_OF_RANGE", None),
+        ("non_finite", float("inf"), "NON_FINITE", None),
+    ]
+    with patch("urllib.request.urlopen") as mock_open:
+        for case, timestamp, expected_status, expected_observed in cases:
+            coin_data = {"usd": 67_000}
+            if case != "missing":
+                coin_data["last_updated_at"] = timestamp
+            mock_open.return_value = response({"bitcoin": coin_data})
+
+            result = coingecko.verify_claim(
+                Claim("BTC 67000 USD", "price", "bitcoin", 67_000, "USD")
+            )
+            capture = result.raw_evidence[0]
+
+            assert capture["provider_observed_at_status"] == expected_status
+            assert capture.get("provider_observed_at") == expected_observed
+            assert "include_last_updated_at=true" in mock_open.call_args.args[0].full_url
+            if case not in {"missing", "null"}:
+                expected_raw = "inf" if case == "non_finite" else timestamp
+                assert capture["provider_observed_at_raw"] == expected_raw
+
+            if expected_observed is not None:
+                assert datetime.fromisoformat(expected_observed).tzinfo == UTC

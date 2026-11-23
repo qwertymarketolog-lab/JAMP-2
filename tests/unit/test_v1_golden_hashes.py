@@ -86,3 +86,18 @@ def test_v1_verdict_hashes_and_two_record_chain_are_golden() -> None:
         *VERDICT_GOLDEN_HASHES,
     )
     assert second.parent_hash == compute_verdict_hash(first)
+
+
+def test_verdict_hash_unchanged_by_verification_mode() -> None:
+    verdict = make_verdict()
+    expected_hash = compute_verdict_hash(verdict)
+
+    assert compute_verdict_hash(replace(verdict, verification_mode=None)) == expected_hash
+    assert (
+        compute_verdict_hash(replace(verdict, verification_mode="SINGLE_SOURCE"))
+        == expected_hash
+    )
+    assert (
+        compute_verdict_hash(replace(verdict, verification_mode="MULTI_SOURCE"))
+        == expected_hash
+    )

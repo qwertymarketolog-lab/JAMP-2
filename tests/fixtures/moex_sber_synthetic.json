@@ -1,0 +1,30 @@
+{
+  "_fixture_metadata": {
+    "status": "SYNTHETIC",
+    "synthetic": true,
+    "provider": "MOEX ISS",
+    "purpose": "Offline parser and Source Metadata Contract test input only",
+    "not_live_market_data": true,
+    "not_suitable_for_freshness_or_market_truth_claims": true,
+    "created_for_review_against": "JAMP-2 ADR-0007",
+    "schema_note": "SYNTHETIC MOEX ISS table envelope (columns + positional data rows); SYSTIME is preserved raw only. No provider_observed_at or timezone is inferred for the securities marketdata endpoint without an authoritative field-level contract."
+  },
+  "marketdata": {
+    "columns": [
+      "SECID",
+      "LAST",
+      "BOARDID",
+      "TRADEDATE",
+      "SYSTIME"
+    ],
+    "data": [
+      [
+        "SBER",
+        275.45,
+        "TQBR",
+        "2026-11-21",
+        "18:45:00"
+      ]
+    ]
+  }
+}

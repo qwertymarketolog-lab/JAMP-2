@@ -19,7 +19,12 @@ from jamp2.domain.claim import NormalizedClaim
 from jamp2.evidence.canonicalize import CANONICALIZATION_VERSION, canonicalize
 from jamp2.evidence.digest import compute_record_hash, compute_sha256
 from jamp2.evidence.model import EvidenceRecord, JSONValue
-from jamp2.evidence.multisource import MultiSourcePolicy, SourceSpec, arbitrate
+from jamp2.evidence.multisource import (
+    MultiSourcePolicy,
+    SourceSpec,
+    arbitrate_from_evidence,
+    fetch_provider_results,
+)
 from jamp2.evidence.replay import replay_verdict
 from jamp2.evidence.verdict import VerdictRecord
 from jamp2.ledger.postgres import (
@@ -65,6 +70,12 @@ def _serialize(record: EvidenceRecord) -> dict[str, object]:
         "verdict_status": record.verdict_status,
         "canonicalization_version": record.canonicalization_version,
         "source_timestamp": record.source_timestamp,
+        "hash_schema_version": record.hash_schema_version,
+        "fetched_at": record.fetched_at.isoformat() if record.fetched_at else None,
+        "provider_observed_at": (
+            record.provider_observed_at.isoformat() if record.provider_observed_at else None
+        ),
+        "source_date": record.source_date,
         "body_complete": record.body_complete,
         "provider_adapter_version": record.provider_adapter_version,
         "parser_version": record.parser_version,
@@ -108,6 +119,46 @@ def _provider_configuration(
     return None
 
 
+def _capture_datetime(value: object) -> datetime | None:
+    if isinstance(value, datetime):
+        parsed = value
+    elif isinstance(value, str):
+        try:
+            parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        except ValueError:
+            return None
+    else:
+        return None
+    if parsed.tzinfo is None or parsed.utcoffset() is None:
+        return None
+    return parsed.astimezone(UTC)
+
+
+def _capture_metadata_diagnostics(observation: dict[str, Any]) -> dict[str, Any]:
+    diagnostics: dict[str, Any] = {}
+    for field_name in ("fetched_at", "provider_observed_at", "source_date"):
+        raw_value = observation.get(field_name)
+        explicit_status = observation.get(f"{field_name}_status")
+        if isinstance(explicit_status, str):
+            status = explicit_status
+        elif raw_value is None:
+            status = "MISSING"
+        elif field_name == "source_date":
+            status = "VALID"
+        elif _capture_datetime(raw_value) is None:
+            status = "INVALID_FORMAT"
+        else:
+            status = "VALID"
+        item: dict[str, Any] = {"status": status}
+        diagnostic_raw = observation.get(f"{field_name}_raw")
+        if diagnostic_raw is None and status != "VALID":
+            diagnostic_raw = raw_value
+        if diagnostic_raw is not None:
+            item["raw"] = diagnostic_raw
+        diagnostics[field_name] = item
+    return diagnostics
+
+
 def _evidence_record(
     *,
     claim_id: str,
@@ -142,6 +193,14 @@ def _evidence_record(
     except (binascii.Error, ValueError) as exc:
         raise IntegrityViolation("provider returned invalid base64 evidence") from exc
     actual_digest = compute_sha256(raw_body)
+    source_date_value = observation.get("source_date")
+    if source_date_value is not None and not isinstance(source_date_value, str):
+        raise IntegrityViolation("provider source_date must be a string or null")
+    source_date = source_date_value
+    parsed_value_with_diagnostics = {
+        **parsed_value,
+        "capture_metadata_diagnostics": _capture_metadata_diagnostics(observation),
+    }
     if not hmac.compare_digest(actual_digest, source_digest):
         raise IntegrityViolation("provider raw response digest mismatch")
     if source != provider_id:
@@ -155,13 +214,17 @@ def _evidence_record(
         raw_body_bytes=raw_body,
         raw_sha256=actual_digest,
         captured_at_utc=datetime.now(UTC),
-        parsed_value=parsed_value,
+        parsed_value=parsed_value_with_diagnostics,
         verdict_status=verdict_status,
         parent_hash=None,
         source_timestamp=None,
         body_complete=body_complete,
         provider_adapter_version=adapter_version,
         parser_version="jamp-provider-json-v1",
+        hash_schema_version="v2",
+        fetched_at=_capture_datetime(observation.get("fetched_at")),
+        provider_observed_at=_capture_datetime(observation.get("provider_observed_at")),
+        source_date=source_date,
     )
 
 
@@ -301,7 +364,7 @@ def build_router(
             unit=payload.unit,
         )
         try:
-            arbitration = await arbitrate(claim, policy, provider_map)
+            outcomes = await fetch_provider_results(claim, policy, provider_map)
         except Exception:
             failure_response = await mark_failed()
             if failure_response is not None:
@@ -321,7 +384,7 @@ def build_router(
         }
         records: list[EvidenceRecord] = []
         try:
-            for outcome in arbitration.outcomes:
+            for outcome in outcomes:
                 source_payload: dict[str, Any] = {
                     "claim": claim_snapshot,
                     "source_status": outcome.status,
@@ -365,11 +428,37 @@ def build_router(
                         parser_version="jamp-provider-json-v1",
                     )
                     records.append(await ledger.append(record))
+
+            # Read the claim's complete evidence set through the chain-verifying API.
+            persisted_records = await ledger.list_by_claim(claim_id)
+            if {item.evidence_id for item in persisted_records} != {
+                item.evidence_id for item in records
+            }:
+                raise IntegrityViolation("appended evidence set does not match the ledger")
+            records = persisted_records
         except (DuplicateEvidence, IntegrityViolation, LedgerUnavailable) as exc:
             failure_response = await mark_failed()
             if failure_response is not None:
                 return failure_response
             return _ledger_error(exc)
+
+        try:
+            arbitration = arbitrate_from_evidence(
+                claim, policy, outcomes, tuple(records), expected_claim_id=claim_id
+            )
+        except IntegrityViolation as exc:
+            failure_response = await mark_failed()
+            if failure_response is not None:
+                return failure_response
+            return _ledger_error(exc)
+        except Exception:
+            failure_response = await mark_failed()
+            if failure_response is not None:
+                return failure_response
+            return JSONResponse(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                content={"error": "SOURCE_POLICY_ARBITRATION_FAILED"},
+            )
 
         verdict_record = VerdictRecord(
             verdict_id=str(uuid.uuid4()),
@@ -382,6 +471,7 @@ def build_router(
             canonicalization_version=CANONICALIZATION_VERSION,
             decided_at_utc=datetime.now(UTC),
             reason_codes=arbitration.reason_codes,
+            verification_mode=arbitration.verification_mode,
             explanation=(
                 f"Required-source arbitration returned {arbitration.verdict_status}; "
                 f"{len(arbitration.outcomes)} required source outcome(s) are linked "
@@ -425,6 +515,8 @@ def build_router(
             "arbitration": {
                 "verdict": arbitration.verdict_status,
                 "reason_codes": list(arbitration.reason_codes),
+                "verification_mode": arbitration.verification_mode,
+                "independent_cross_check": arbitration.independent_cross_check,
                 "reducer": arbitration.reducer,
                 "required_sources": [
                     outcome.source.provider_id for outcome in arbitration.outcomes
@@ -468,6 +560,7 @@ def build_router(
             "canonicalization_version": record.canonicalization_version,
             "decided_at_utc": record.decided_at_utc.isoformat(),
             "reason_codes": list(record.reason_codes),
+            "verification_mode": record.verification_mode,
             "explanation": record.explanation,
             "parent_hash": record.parent_hash,
         }
