@@ -7,7 +7,7 @@ from dataclasses import replace
 from datetime import UTC, datetime
 
 from jamp2.domain.claim import NormalizedClaim
-from jamp2.evidence.digest import compute_sha256
+from jamp2.evidence.digest import compute_record_hash, compute_sha256
 from jamp2.evidence.model import EvidenceRecord
 from jamp2.evidence.multisource import (
     MultiSourcePolicy,
@@ -275,6 +275,9 @@ def test_multi_source_replay_reduces_persisted_conflicting_observations() -> Non
                 provider_adapter_version="test-adapter-v1",
             )
         )
+        records[-1] = replace(
+            records[-1], record_hash=compute_record_hash(records[-1])
+        )
     original = replace(
         verdict(("evidence-source-a", "evidence-source-b"), status="AMBIGUOUS"),
         verification_mode="MULTI_SOURCE",
@@ -331,6 +334,9 @@ def test_multi_source_replay_fails_closed_when_conflict_is_not_reproduced() -> N
                 provider_observed_at=observed_at,
                 provider_adapter_version="test-adapter-v1",
             )
+        )
+        records[-1] = replace(
+            records[-1], record_hash=compute_record_hash(records[-1])
         )
     original = replace(
         verdict(("evidence-source-a", "evidence-source-b"), status="AMBIGUOUS"),
