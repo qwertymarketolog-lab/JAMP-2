@@ -139,11 +139,11 @@ def test_moex_without_confirmed_calendar_is_ambiguous_and_blocked():
     outcome = _outcome(source, "SBER", quote="RUB", price_type="LAST_DEAL", calendar=None)
     result = arbitrate_from_evidence(
         claim,
-        expected_claim_id="claim-offline",
         _policy(source, asset="equity_security", identifier="SBER", quote="RUB",
                 price_type="LAST_DEAL", calendar_required=True),
         (outcome,),
         _evidence_records((outcome,), claim),
+        expected_claim_id="claim-offline",
     )
     assert result.verdict_status == "AMBIGUOUS"
     assert "SOURCE_MARKET_CALENDAR_UNCONFIRMED" in result.reason_codes
@@ -158,11 +158,11 @@ def test_fresh_coingecko_source_is_verified_without_network():
     outcome = _outcome(source, "bitcoin", quote="USD", price_type="SPOT", calendar=None)
     result = arbitrate_from_evidence(
         claim,
-        expected_claim_id="claim-offline",
         _policy(source, asset="crypto_asset", identifier="bitcoin", quote="USD",
                 price_type="SPOT", calendar_required=False),
         (outcome,),
         _evidence_records((outcome,), claim),
+        expected_claim_id="claim-offline",
     )
     assert result.verdict_status == "VERIFIED"
     assert result.verification_mode == "SINGLE_SOURCE"
@@ -176,11 +176,11 @@ def test_arbitration_refuses_empty_ledger_evidence():
     with pytest.raises(IntegrityViolation, match="ledger records are required"):
         arbitrate_from_evidence(
             claim,
-            expected_claim_id="claim-offline",
             _policy(source, asset="crypto_asset", identifier="bitcoin", quote="USD",
                     price_type="SPOT", calendar_required=False),
             (outcome,),
             (),
+            expected_claim_id="claim-offline",
         )
 
 
@@ -193,11 +193,11 @@ def test_arbitration_rejects_tampered_record_hash():
     with pytest.raises(IntegrityViolation, match="record_hash is missing or invalid"):
         arbitrate_from_evidence(
             claim,
-            expected_claim_id="claim-offline",
             _policy(source, asset="crypto_asset", identifier="bitcoin", quote="USD",
                     price_type="SPOT", calendar_required=False),
             (outcome,),
             (tampered,),
+            expected_claim_id="claim-offline",
         )
 
 
@@ -210,11 +210,11 @@ def test_arbitration_rejects_outcome_not_matching_ledger_payload():
     with pytest.raises(IntegrityViolation, match="does not match exactly one persisted"):
         arbitrate_from_evidence(
             claim,
-            expected_claim_id="claim-offline",
             _policy(source, asset="crypto_asset", identifier="bitcoin", quote="USD",
                     price_type="SPOT", calendar_required=False),
             (changed,),
             records,
+            expected_claim_id="claim-offline",
         )
 
 
@@ -226,11 +226,11 @@ def test_stale_coingecko_source_is_ambiguous_not_inconclusive():
     )
     result = arbitrate_from_evidence(
         claim,
-        expected_claim_id="claim-offline",
         _policy(source, asset="crypto_asset", identifier="bitcoin", quote="USD",
                 price_type="SPOT", calendar_required=False),
         (outcome,),
         _evidence_records((outcome,), claim),
+        expected_claim_id="claim-offline",
     )
     assert result.verdict_status == "AMBIGUOUS"
     assert result.reason_codes

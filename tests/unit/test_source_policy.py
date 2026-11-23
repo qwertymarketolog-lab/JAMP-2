@@ -2,6 +2,7 @@
 
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
+from typing import Any, cast
 
 import pytest
 
@@ -241,4 +242,4 @@ def test_per_source_ttl_mapping_is_immutable_and_detached_from_input():
     assert source_policy.max_age_by_source["a"] == 10
 
     with pytest.raises(TypeError):
-        source_policy.max_age_by_source["a"] = 30
+        cast(Any, source_policy.max_age_by_source)["a"] = 30
