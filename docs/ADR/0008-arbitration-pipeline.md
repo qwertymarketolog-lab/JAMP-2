@@ -16,9 +16,16 @@ The route follows four ordered stages:
 
 `arbitrate_from_evidence` receives the claim, policy, fetched outcomes, and
 ledger evidence records. It performs no network access. Evidence records are
-provenance context; they are not reducer inputs. The legacy async `arbitrate`
-entry point remains a deprecated compatibility wrapper around fetch and
-evidence-only arbitration.
+provenance context; they are not reducer inputs.
+
+The legacy async `arbitrate` entry point is retained as a deprecated
+interface-compatibility wrapper: it preserves the callable signature and
+fetches provider outcomes, but it does not run policy evaluation or conflict
+reduction. Because this wrapper has no persisted ledger records to verify, it
+always returns `INCONCLUSIVE` with `POLICY_GATE_BLOCKED` and
+`EVIDENCE_LEDGER_REQUIRED`. Callers requiring arbitration must append and
+read back evidence records, then invoke `arbitrate_from_evidence`; the wrapper
+must not be used to obtain a verdict outside the evidence-ledger pipeline.
 
 Partial policy failure is AMBIGUOUS. All required sources failed is INCONCLUSIVE.
 Unknown provider timestamps and unconfirmed market calendars remain unknown;
