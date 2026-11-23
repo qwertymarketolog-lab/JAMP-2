@@ -2,15 +2,25 @@
 
 from __future__ import annotations
 
+import base64
 import json
 import math
 from collections.abc import Sequence
+from datetime import UTC, datetime
 from typing import Any
 
+from jamp2.domain.claim import NormalizedClaim
 from jamp2.evidence.canonicalize import CANONICALIZATION_VERSION
+from jamp2.evidence.conflict import SourceObservation
 from jamp2.evidence.digest import compute_sha256
-from jamp2.evidence.conflict import SourceObservation, detect_conflicts
 from jamp2.evidence.model import EvidenceRecord
+from jamp2.evidence.multisource import (
+    MultiSourcePolicy,
+    SourceOutcome,
+    SourceSpec,
+    arbitrate_from_evidence,
+)
+from jamp2.evidence.policy import SourcePolicyRecord, SourceProvenance
 from jamp2.evidence.verdict import VerdictRecord
 
 POLICY_ID = "jamp2.provider-price-comparison"
@@ -159,86 +169,157 @@ def _replay_coingecko(
 def _replay_multi_source_conflict(
     verdict: VerdictRecord,
     records: Sequence[EvidenceRecord],
-    claim: dict[str, Any],
+    claim_snapshot: dict[str, Any],
 ) -> tuple[str, str, dict[str, Any]]:
-    """Replay persisted multi-source reducer inputs without provider access.
-
-    This deliberately replays the reducer only. Source provenance and the original
-    policy-gate decision are not persisted as independently replayable inputs yet.
-    """
+    """Re-run the persisted Policy Gate and reducer without provider/network access."""
     if verdict.verification_mode != "MULTI_SOURCE":
         return "INCONCLUSIVE", "MULTI_SOURCE_MODE_MISSING", {}
-    if "SOURCE_VALUES_DIVERGE" not in verdict.reason_codes:
-        return "INCONCLUSIVE", "ORIGINAL_CONFLICT_REASON_MISSING", {}
-    if len(records) < 2 or len({record.provider for record in records}) != len(records):
+    if len(records) < 2:
         return "INCONCLUSIVE", "MULTI_SOURCE_EVIDENCE_SHAPE_UNSUPPORTED", {}
 
-    subject_kind = claim.get("subject_kind")
-    subject_identifier = claim.get("subject_identifier")
-    predicate = claim.get("predicate")
-    unit = claim.get("unit")
-    if not all(isinstance(item, str) and item for item in (
-        subject_kind, subject_identifier, predicate, unit
-    )):
-        return "INCONCLUSIVE", "CLAIM_SNAPSHOT_INVALID", {}
+    parsed_records = [record.parsed_value for record in records]
+    if any(not isinstance(item, dict) for item in parsed_records):
+        return "INCONCLUSIVE", "POLICY_REPLAY_CONTEXT_MISSING", {}
+    contexts = [item.get("replay_context") for item in parsed_records]
+    if (
+        any(not isinstance(item, dict) for item in contexts)
+        or any(item != contexts[0] for item in contexts[1:])
+    ):
+        return "INCONCLUSIVE", "POLICY_REPLAY_CONTEXT_MISSING_OR_CONFLICTING", {}
+    context = contexts[0]
+    if context.get("schema_version") != "jamp2-policy-gate-replay-v1":
+        return "INCONCLUSIVE", "POLICY_REPLAY_CONTEXT_VERSION_UNSUPPORTED", {}
 
-    observations: list[SourceObservation] = []
-    price_types: set[str] = set()
-    for record in records:
-        parsed = record.parsed_value
-        if (
-            not isinstance(parsed, dict)
-            or record.verdict_status != "SOURCE_OBSERVATION_CAPTURED"
-        ):
-            return "INCONCLUSIVE", "MULTI_SOURCE_OBSERVATION_NOT_CAPTURED", {}
-        provider_result = parsed.get("provider_result")
-        if not isinstance(provider_result, dict):
-            return "INCONCLUSIVE", "MULTI_SOURCE_PROVIDER_RESULT_MISSING", {}
-        if parsed.get("source_status") not in {"E4_VERIFIED", "E4_CONTRADICTED"}:
-            return "INCONCLUSIVE", "MULTI_SOURCE_PROVIDER_STATUS_UNSUPPORTED", {}
-        observed = _finite_positive(provider_result.get("observed_last"))
-        try:
-            raw_payload = json.loads(record.raw_body_bytes.decode("utf-8"))
-        except (UnicodeDecodeError, json.JSONDecodeError):
-            return "INCONCLUSIVE", "MULTI_SOURCE_RAW_JSON_INVALID", {}
-        raw_observed = (
-            _finite_positive(raw_payload.get("price"))
-            if isinstance(raw_payload, dict)
-            else None
+    try:
+        evaluation_time = datetime.fromisoformat(
+            str(context["evaluation_time_utc"]).replace("Z", "+00:00")
         )
-        raw_provider = raw_payload.get("provider") if isinstance(raw_payload, dict) else None
-        identifiers = provider_result.get("source_identifiers")
-        quote_currency = provider_result.get("quote_currency")
-        price_type = provider_result.get("price_type")
-        if (
-            observed is None
-            or raw_observed is None
-            or raw_observed != observed
-            or raw_provider != record.provider
-            or not isinstance(identifiers, list)
-            or subject_identifier not in identifiers
-            or quote_currency != unit
-            or not isinstance(price_type, str)
-            or not price_type
-        ):
-            return "INCONCLUSIVE", "MULTI_SOURCE_OBSERVATION_METADATA_INVALID", {}
-        price_types.add(price_type)
-        observations.append(
-            SourceObservation(
-                source_id=record.provider,
-                fact_key=f"{subject_kind}:{subject_identifier}:{predicate}",
-                value=observed,
-                unit=unit,
-                usable=True,
+        if evaluation_time.tzinfo is None or evaluation_time.utcoffset() is None:
+            raise ValueError("evaluation timestamp must be timezone-aware")
+        evaluation_time = evaluation_time.astimezone(UTC)
+        policy_data = context["policy"]
+        source_policy_data = policy_data["source_policy"]
+        provenance_data = source_policy_data["provenance"]
+        required_sources_data = policy_data["required_sources"]
+        if not isinstance(provenance_data, list) or not isinstance(required_sources_data, list):
+            raise ValueError("policy source arrays are invalid")
+        provenance = tuple(SourceProvenance(**item) for item in provenance_data)
+        source_policy = SourcePolicyRecord(
+            policy_id=source_policy_data["policy_id"],
+            version=source_policy_data["version"],
+            asset_class=source_policy_data["asset_class"],
+            required_identifiers=tuple(source_policy_data["required_identifiers"]),
+            market_calendar_required=source_policy_data["market_calendar_required"],
+            quote_currency=source_policy_data["quote_currency"],
+            price_type=source_policy_data["price_type"],
+            required_sources=tuple(source_policy_data["required_sources"]),
+            independence_group=source_policy_data["independence_group"],
+            max_age_seconds=source_policy_data["max_age_seconds"],
+            max_time_skew_seconds=source_policy_data["max_time_skew_seconds"],
+            comparison_mode=source_policy_data["comparison_mode"],
+            tolerance=source_policy_data["tolerance"],
+            timeout_seconds=source_policy_data["timeout_seconds"],
+            verification_mode=source_policy_data["verification_mode"],
+            provenance=provenance,
+            max_age_by_source=dict(source_policy_data["max_age_by_source"]),
+        )
+        source_specs = tuple(SourceSpec(**item) for item in required_sources_data)
+        policy = MultiSourcePolicy(
+            policy_id=policy_data["policy_id"],
+            version=policy_data["version"],
+            required_sources=source_specs,
+            timeout_seconds=policy_data["timeout_seconds"],
+            comparison_mode=policy_data["comparison_mode"],
+            source_policy=source_policy,
+        )
+        if policy.policy_id != verdict.policy_id or policy.version != verdict.policy_version:
+            raise ValueError("persisted policy identity does not match the verdict")
+        claim = NormalizedClaim(
+            text=claim_snapshot["text"],
+            subject_kind=claim_snapshot["subject_kind"],
+            subject_identifier=claim_snapshot["subject_identifier"],
+            predicate=claim_snapshot["predicate"],
+            expected_value=claim_snapshot["expected_value"],
+            unit=claim_snapshot["unit"],
+        )
+
+        outcomes: list[SourceOutcome] = []
+        for source in source_specs:
+            source_records = [record for record in records if record.provider == source.provider_id]
+            if not source_records:
+                raise ValueError("required source has no persisted evidence")
+            parsed = [record.parsed_value for record in source_records]
+            source_statuses = {item.get("source_status") for item in parsed}
+            provider_results = [item.get("provider_result") for item in parsed]
+            if len(source_statuses) != 1 or any(
+                item != provider_results[0] for item in provider_results[1:]
+            ) or not isinstance(provider_results[0], dict):
+                raise ValueError("source outcome metadata is inconsistent")
+            source_status = next(iter(source_statuses))
+            details = provider_results[0]
+            if not isinstance(source_status, str):
+                raise ValueError("source status is missing")
+            captures: list[dict[str, Any]] = []
+            for record in source_records:
+                if record.verdict_status == "SOURCE_FAILURE":
+                    continue
+                captures.append(
+                    {
+                        "source": record.provider,
+                        "url": record.url,
+                        "status_code": record.http_status,
+                        "body_complete": record.body_complete,
+                        "raw_body_base64": base64.b64encode(record.raw_body_bytes).decode("ascii"),
+                        "sha256_body": record.raw_sha256,
+                        "fetched_at": record.fetched_at.isoformat() if record.fetched_at else None,
+                        "provider_observed_at": (
+                            record.provider_observed_at.isoformat()
+                            if record.provider_observed_at else None
+                        ),
+                        "source_date": record.source_date,
+                    }
+                )
+            observed = _finite_positive(details.get("observed_last", details.get("observed_value")))
+            usable = observed is not None and source_status in {"E4_VERIFIED", "E4_CONTRADICTED"}
+            outcomes.append(
+                SourceOutcome(
+                    source=source,
+                    status=source_status,
+                    details=details,
+                    raw_evidence=captures,
+                    observation=SourceObservation(
+                        source_id=source.provider_id,
+                        fact_key=(
+                            f"{claim.subject_kind}:{claim.subject_identifier}:{claim.predicate}"
+                        ),
+                        value=observed if observed is not None else 0,
+                        unit=claim.unit,
+                        usable=usable,
+                    ),
+                )
             )
-        )
 
-    if len(price_types) != 1:
-        return "INCONCLUSIVE", "MULTI_SOURCE_PRICE_TYPES_INCOMPARABLE", {}
-    reducer = detect_conflicts(observations)
-    if reducer.get("status") != "AMBIGUOUS":
-        return "INCONCLUSIVE", "MULTI_SOURCE_CONFLICT_NOT_REPRODUCED", reducer
-    return "AMBIGUOUS", "MULTI_SOURCE_CONFLICT_REPRODUCED", reducer
+        arbitration = arbitrate_from_evidence(
+            claim, policy, tuple(outcomes), records, now=evaluation_time
+        )
+    except (KeyError, TypeError, ValueError, OverflowError):
+        return "INCONCLUSIVE", "POLICY_REPLAY_CONTEXT_INVALID", {}
+    gate_observations = [
+        {
+            "provider_id": outcome.source.provider_id,
+            "observation_status": outcome.details.get("observation_status"),
+            "reason_code": outcome.details.get("observation_reason_code"),
+        }
+        for outcome in arbitration.outcomes
+    ]
+    return arbitration.verdict_status, "POLICY_GATE_AND_REDUCER_REPLAYED", {
+        "status": arbitration.reducer.get("status"),
+        "usable_observation_count": arbitration.reducer.get("usable_observation_count", 0),
+        "verification_mode": arbitration.verification_mode,
+        "independent_cross_check": arbitration.independent_cross_check,
+        "policy_gate_observations": gate_observations,
+        "reason_codes": list(arbitration.reason_codes),
+    }
 
 
 def replay_verdict(
@@ -277,8 +358,8 @@ def replay_verdict(
             "matches_original": status == verdict.status,
             "reason_code": reason,
             "reducer": reducer,
-            "replay_scope": "REDUCER_ONLY",
-            "policy_gate_revalidated": False,
+            "replay_scope": "POLICY_GATE_AND_REDUCER",
+            "policy_gate_revalidated": reason == "POLICY_GATE_AND_REDUCER_REPLAYED",
             "policy_id": verdict.policy_id,
             "policy_version": verdict.policy_version,
             "code_version": verdict.code_version,
