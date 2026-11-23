@@ -169,3 +169,97 @@ def test_replay_fails_closed_for_unknown_policy_or_bad_digest() -> None:
         replay_verdict(verdict(("evidence-catalog",)), [corrupted])["reason_code"]
         == "EVIDENCE_INTEGRITY_OR_VERSION_MISMATCH"
     )
+
+
+
+def test_multi_source_replay_reduces_persisted_conflicting_observations() -> None:
+    claim = claim_snapshot(unit="USD")
+    records = []
+    for evidence_id, provider, value in (
+        ("evidence-source-a", "source-a", 100.0),
+        ("evidence-source-b", "source-b", 105.0),
+    ):
+        raw = json.dumps({"price": value}).encode()
+        record = evidence(
+            evidence_id,
+            provider,
+            f"https://{provider}.example/price",
+            raw,
+            claim,
+        )
+        records.append(
+            replace(
+                record,
+                verdict_status="SOURCE_OBSERVATION_CAPTURED",
+                parsed_value={
+                    "claim": claim,
+                    "source_status": "E4_VERIFIED",
+                    "provider_result": {
+                        "observed_last": value,
+                        "source_identifiers": ["SBER"],
+                        "quote_currency": "USD",
+                        "price_type": "SPOT",
+                    },
+                },
+            )
+        )
+    original = replace(
+        verdict(("evidence-source-a", "evidence-source-b"), status="AMBIGUOUS"),
+        verification_mode="MULTI_SOURCE",
+        reason_codes=("SOURCE_VALUES_DIVERGE",),
+    )
+
+    result = replay_verdict(original, records)
+
+    assert result["replay_status"] == "AMBIGUOUS"
+    assert result["matches_original"] is True
+    assert result["reason_code"] == "MULTI_SOURCE_CONFLICT_REPRODUCED"
+    assert result["replay_scope"] == "REDUCER_ONLY"
+    assert result["policy_gate_revalidated"] is False
+    assert result["reducer"]["usable_observation_count"] == 2
+    assert result["network_calls"] == 0
+
+
+def test_multi_source_replay_fails_closed_when_conflict_is_not_reproduced() -> None:
+    claim = claim_snapshot(unit="USD")
+    records = []
+    for evidence_id, provider in (
+        ("evidence-source-a", "source-a"),
+        ("evidence-source-b", "source-b"),
+    ):
+        raw = b'{"price":100}'
+        record = evidence(
+            evidence_id,
+            provider,
+            f"https://{provider}.example/price",
+            raw,
+            claim,
+        )
+        records.append(
+            replace(
+                record,
+                verdict_status="SOURCE_OBSERVATION_CAPTURED",
+                parsed_value={
+                    "claim": claim,
+                    "source_status": "E4_VERIFIED",
+                    "provider_result": {
+                        "observed_last": 100.0,
+                        "source_identifiers": ["SBER"],
+                        "quote_currency": "USD",
+                        "price_type": "SPOT",
+                    },
+                },
+            )
+        )
+    original = replace(
+        verdict(("evidence-source-a", "evidence-source-b"), status="AMBIGUOUS"),
+        verification_mode="MULTI_SOURCE",
+        reason_codes=("SOURCE_VALUES_DIVERGE",),
+    )
+
+    result = replay_verdict(original, records)
+
+    assert result["replay_status"] == "INCONCLUSIVE"
+    assert result["matches_original"] is False
+    assert result["reason_code"] == "MULTI_SOURCE_CONFLICT_NOT_REPRODUCED"
+    assert result["network_calls"] == 0
