@@ -6,8 +6,15 @@ import json
 from dataclasses import replace
 from datetime import UTC, datetime
 
+from jamp2.domain.claim import NormalizedClaim
 from jamp2.evidence.digest import compute_sha256
 from jamp2.evidence.model import EvidenceRecord
+from jamp2.evidence.multisource import (
+    MultiSourcePolicy,
+    SourceSpec,
+    build_policy_replay_context,
+)
+from jamp2.evidence.policy import SourcePolicyRecord, SourceProvenance
 from jamp2.evidence.replay import replay_verdict
 from jamp2.evidence.verdict import VerdictRecord
 
@@ -55,6 +62,64 @@ def evidence(
         if provider == "moex.iss"
         else "coingecko-adapter-v1",
         parser_version="jamp-provider-json-v1",
+    )
+
+
+def multi_source_replay_context() -> dict[str, object]:
+    claim = NormalizedClaim(
+        text="bounded price claim",
+        subject_kind="equity_security",
+        subject_identifier="SBER",
+        predicate="price",
+        expected_value=100.0,
+        unit="USD",
+    )
+    sources = (
+        SourceSpec("source_a", "source-a", "source-a.example", "test-adapter-v1"),
+        SourceSpec("source_b", "source-b", "source-b.example", "test-adapter-v1"),
+    )
+    source_policy = SourcePolicyRecord(
+        policy_id="jamp2.provider-price-comparison",
+        version=1,
+        asset_class="equity_security",
+        required_identifiers=("SBER",),
+        market_calendar_required=False,
+        quote_currency="USD",
+        price_type="SPOT",
+        required_sources=("source-a", "source-b"),
+        independence_group="unit-test-independent-sources",
+        max_age_seconds=120,
+        max_time_skew_seconds=5,
+        verification_mode="MULTI_SOURCE",
+        provenance=(
+            SourceProvenance(
+                provider_id="source-a",
+                upstream_entity="upstream-a",
+                aggregation_methodology="direct-spot-observation",
+                transport_failure_domain="transport-a",
+                calculation_failure_domain="calculation-a",
+                independence_status="CONFIRMED",
+            ),
+            SourceProvenance(
+                provider_id="source-b",
+                upstream_entity="upstream-b",
+                aggregation_methodology="direct-spot-observation",
+                transport_failure_domain="transport-b",
+                calculation_failure_domain="calculation-b",
+                independence_status="CONFIRMED",
+            ),
+        ),
+    )
+    policy = MultiSourcePolicy(
+        "jamp2.provider-price-comparison",
+        "provider-defaults-v1",
+        sources,
+        source_policy=source_policy,
+    )
+    return build_policy_replay_context(
+        claim,
+        policy,
+        evaluated_at=datetime(2026, 11, 20, 0, 0, 10, tzinfo=UTC),
     )
 
 
@@ -173,6 +238,117 @@ def test_replay_fails_closed_for_unknown_policy_or_bad_digest() -> None:
 
 def test_multi_source_replay_reduces_persisted_conflicting_observations() -> None:
     claim = claim_snapshot(unit="USD")
+    replay_context = multi_source_replay_context()
+    observed_at = datetime(2026, 11, 20, 0, 0, tzinfo=UTC)
+    fetched_at = datetime(2026, 11, 20, 0, 0, 1, tzinfo=UTC)
+    records = []
+    for evidence_id, provider, value in (
+        ("evidence-source-a", "source-a", 100.0),
+        ("evidence-source-b", "source-b", 105.0),
+    ):
+        raw = json.dumps({"provider": provider, "price": value}).encode()
+        record = evidence(
+            evidence_id,
+            provider,
+            f"https://{provider}.example/price",
+            raw,
+            claim,
+        )
+        records.append(
+            replace(
+                record,
+                verdict_status="SOURCE_OBSERVATION_CAPTURED",
+                parsed_value={
+                    "claim": claim,
+                    "replay_context": replay_context,
+                    "source_status": "E4_VERIFIED",
+                    "provider_result": {
+                        "observed_last": value,
+                        "source_identifiers": ["SBER"],
+                        "quote_currency": "USD",
+                        "price_type": "SPOT",
+                    },
+                },
+                hash_schema_version="v2",
+                fetched_at=fetched_at,
+                provider_observed_at=observed_at,
+                provider_adapter_version="test-adapter-v1",
+            )
+        )
+    original = replace(
+        verdict(("evidence-source-a", "evidence-source-b"), status="AMBIGUOUS"),
+        verification_mode="MULTI_SOURCE",
+        reason_codes=("SOURCE_VALUES_DIVERGE",),
+    )
+
+    result = replay_verdict(original, records)
+
+    assert result["replay_status"] == "AMBIGUOUS"
+    assert result["matches_original"] is True
+    assert result["reason_code"] == "POLICY_GATE_AND_REDUCER_REPLAYED"
+    assert result["replay_scope"] == "POLICY_GATE_AND_REDUCER"
+    assert result["policy_gate_revalidated"] is True
+    assert result["reducer"]["usable_observation_count"] == 2
+    assert result["reducer"]["independent_cross_check"] is True
+    assert result["network_calls"] == 0
+
+
+def test_multi_source_replay_fails_closed_when_conflict_is_not_reproduced() -> None:
+    claim = claim_snapshot(unit="USD")
+    replay_context = multi_source_replay_context()
+    observed_at = datetime(2026, 11, 20, 0, 0, tzinfo=UTC)
+    fetched_at = datetime(2026, 11, 20, 0, 0, 1, tzinfo=UTC)
+    records = []
+    for evidence_id, provider in (
+        ("evidence-source-a", "source-a"),
+        ("evidence-source-b", "source-b"),
+    ):
+        raw = f'{{"provider":"{provider}","price":100}}'.encode()
+        record = evidence(
+            evidence_id,
+            provider,
+            f"https://{provider}.example/price",
+            raw,
+            claim,
+        )
+        records.append(
+            replace(
+                record,
+                verdict_status="SOURCE_OBSERVATION_CAPTURED",
+                parsed_value={
+                    "claim": claim,
+                    "replay_context": replay_context,
+                    "source_status": "E4_VERIFIED",
+                    "provider_result": {
+                        "observed_last": 100.0,
+                        "source_identifiers": ["SBER"],
+                        "quote_currency": "USD",
+                        "price_type": "SPOT",
+                    },
+                },
+                hash_schema_version="v2",
+                fetched_at=fetched_at,
+                provider_observed_at=observed_at,
+                provider_adapter_version="test-adapter-v1",
+            )
+        )
+    original = replace(
+        verdict(("evidence-source-a", "evidence-source-b"), status="AMBIGUOUS"),
+        verification_mode="MULTI_SOURCE",
+        reason_codes=("SOURCE_VALUES_DIVERGE",),
+    )
+
+    result = replay_verdict(original, records)
+
+    assert result["replay_status"] == "VERIFIED"
+    assert result["matches_original"] is False
+    assert result["reason_code"] == "POLICY_GATE_AND_REDUCER_REPLAYED"
+    assert result["policy_gate_revalidated"] is True
+    assert result["network_calls"] == 0
+
+
+def test_multi_source_replay_fails_closed_without_policy_context() -> None:
+    claim = claim_snapshot(unit="USD")
     records = []
     for evidence_id, provider, value in (
         ("evidence-source-a", "source-a", 100.0),
@@ -210,55 +386,8 @@ def test_multi_source_replay_reduces_persisted_conflicting_observations() -> Non
 
     result = replay_verdict(original, records)
 
-    assert result["replay_status"] == "AMBIGUOUS"
-    assert result["matches_original"] is True
-    assert result["reason_code"] == "MULTI_SOURCE_CONFLICT_REPRODUCED"
-    assert result["replay_scope"] == "REDUCER_ONLY"
-    assert result["policy_gate_revalidated"] is False
-    assert result["reducer"]["usable_observation_count"] == 2
-    assert result["network_calls"] == 0
-
-
-def test_multi_source_replay_fails_closed_when_conflict_is_not_reproduced() -> None:
-    claim = claim_snapshot(unit="USD")
-    records = []
-    for evidence_id, provider in (
-        ("evidence-source-a", "source-a"),
-        ("evidence-source-b", "source-b"),
-    ):
-        raw = f'{{"provider":"{provider}","price":100}}'.encode()
-        record = evidence(
-            evidence_id,
-            provider,
-            f"https://{provider}.example/price",
-            raw,
-            claim,
-        )
-        records.append(
-            replace(
-                record,
-                verdict_status="SOURCE_OBSERVATION_CAPTURED",
-                parsed_value={
-                    "claim": claim,
-                    "source_status": "E4_VERIFIED",
-                    "provider_result": {
-                        "observed_last": 100.0,
-                        "source_identifiers": ["SBER"],
-                        "quote_currency": "USD",
-                        "price_type": "SPOT",
-                    },
-                },
-            )
-        )
-    original = replace(
-        verdict(("evidence-source-a", "evidence-source-b"), status="AMBIGUOUS"),
-        verification_mode="MULTI_SOURCE",
-        reason_codes=("SOURCE_VALUES_DIVERGE",),
-    )
-
-    result = replay_verdict(original, records)
-
     assert result["replay_status"] == "INCONCLUSIVE"
-    assert result["matches_original"] is False
-    assert result["reason_code"] == "MULTI_SOURCE_CONFLICT_NOT_REPRODUCED"
+    assert result["policy_gate_revalidated"] is False
+    assert result["reason_code"] == "POLICY_REPLAY_CONTEXT_MISSING_OR_CONFLICTING"
     assert result["network_calls"] == 0
+
