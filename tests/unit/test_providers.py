@@ -6,8 +6,6 @@ import urllib.error
 from datetime import UTC, datetime
 from unittest.mock import MagicMock, patch
 
-import pytest
-
 from jamp2.domain.claim import Claim, NormalizedClaim
 from jamp2.providers import coingecko, moex
 from jamp2.providers.base import ProviderResult
