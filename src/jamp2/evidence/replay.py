@@ -337,7 +337,7 @@ def replay_verdict(
         record.claim_id != verdict.claim_id
         or record.canonicalization_version != verdict.canonicalization_version
         or record.parser_version != PARSER_VERSION
-        or not record.body_complete
+        or (verdict.verification_mode != "MULTI_SOURCE" and not record.body_complete)
         or compute_sha256(record.raw_body_bytes) != record.raw_sha256
         for record in records
     ):
