@@ -319,6 +319,44 @@ def test_downgrade_007_pending_lease(
     assert "attempt_count" not in columns_after
 
 
+async def _insert_head_evidence(database_url: URL) -> None:
+    connection = await asyncpg.connect(
+        **_connect_kwargs(database_url, database_url.database or "")
+    )
+    raw_body = b'{"price":100}'
+    try:
+        await connection.execute(
+            """
+            INSERT INTO evidence (
+                evidence_id, claim_id, provider, url, http_status, raw_body_bytes,
+                raw_sha256, captured_at_utc, parsed_value, verdict_status,
+                canonicalization_version, body_complete, provider_adapter_version,
+                parser_version, parent_hash, record_hash
+            )
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10,
+                    $11, $12, $13, $14, $15, $16)
+            """,
+            "evidence-1",
+            "claim-1",
+            "test-provider",
+            "https://example.test/evidence",
+            200,
+            raw_body,
+            hashlib.sha256(raw_body).hexdigest(),
+            datetime.now(UTC),
+            '{"price":100}',
+            "OBSERVATION_CAPTURED",
+            "jamp-json-nfc-v1",
+            True,
+            "provider-adapter-v1",
+            "provider-parser-v1",
+            None,
+            "a" * 64,
+        )
+    finally:
+        await connection.close()
+
+
 async def _set_v2_metadata(database_url: URL) -> None:
     connection = await asyncpg.connect(
         **_connect_kwargs(database_url, database_url.database or "")
@@ -344,7 +382,7 @@ def test_008_downgrade_blocks_populated_v2_metadata_without_data_loss(
 ) -> None:
     config, database_url = migration_database
     command.upgrade(config, "head")
-    asyncio.run(_insert_evidence(database_url))
+    asyncio.run(_insert_head_evidence(database_url))
     asyncio.run(_insert_verdict(database_url))
     asyncio.run(_set_v2_metadata(database_url))
 
@@ -361,7 +399,7 @@ def test_008_downgrade_preserves_populated_legacy_v1_rows(
 ) -> None:
     config, database_url = migration_database
     command.upgrade(config, "head")
-    asyncio.run(_insert_evidence(database_url))
+    asyncio.run(_insert_head_evidence(database_url))
     asyncio.run(_insert_verdict(database_url))
 
     command.downgrade(config, "007_pending_lease")
