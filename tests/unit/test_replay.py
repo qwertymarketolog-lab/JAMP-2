@@ -179,7 +179,7 @@ def test_multi_source_replay_reduces_persisted_conflicting_observations() -> Non
         ("evidence-source-a", "source-a", 100.0),
         ("evidence-source-b", "source-b", 105.0),
     ):
-        raw = json.dumps({"price": value}).encode()
+        raw = json.dumps({"provider": provider, "price": value}).encode()
         record = evidence(
             evidence_id,
             provider,
@@ -227,7 +227,7 @@ def test_multi_source_replay_fails_closed_when_conflict_is_not_reproduced() -> N
         ("evidence-source-a", "source-a"),
         ("evidence-source-b", "source-b"),
     ):
-        raw = b'{"price":100}'
+        raw = f'{{"provider":"{provider}","price":100}}'.encode()
         record = evidence(
             evidence_id,
             provider,
