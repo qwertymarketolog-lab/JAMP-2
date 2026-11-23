@@ -11,7 +11,6 @@ from jamp2.evidence.model import EvidenceRecord
 from jamp2.evidence.replay import replay_verdict
 from jamp2.evidence.verdict import VerdictRecord
 
-
 def claim_snapshot(
     subject_kind: str = "equity_security",
     subject_identifier: str = "SBER",
@@ -26,7 +25,6 @@ def claim_snapshot(
         "expected_value": expected_value,
         "unit": unit,
     }
-
 
 def evidence(
     evidence_id: str,
@@ -57,7 +55,6 @@ def evidence(
         parser_version="jamp-provider-json-v1",
     )
 
-
 def verdict(evidence_ids: tuple[str, ...], status: str = "VERIFIED") -> VerdictRecord:
     return VerdictRecord(
         verdict_id="verdict-replay",
@@ -72,7 +69,6 @@ def verdict(evidence_ids: tuple[str, ...], status: str = "VERIFIED") -> VerdictR
         reason_codes=("E4_VERIFIED",),
         explanation="Original recorded decision.",
     )
-
 
 def test_moex_replay_reparses_stored_catalog_and_marketdata_bytes() -> None:
     claim = claim_snapshot()
@@ -104,7 +100,6 @@ def test_moex_replay_reparses_stored_catalog_and_marketdata_bytes() -> None:
     assert result["observed_value"] == 100.0
     assert result["network_calls"] == 0
 
-
 def test_moex_replay_preserves_contradiction() -> None:
     claim = claim_snapshot(expected_value=500.0)
     catalog = b'{"securities":{"columns":["secid"],"data":[["SBER"]]}}'
@@ -132,7 +127,6 @@ def test_moex_replay_preserves_contradiction() -> None:
     assert result["replay_status"] == "CONTRADICTED"
     assert result["matches_original"] is True
 
-
 def test_coingecko_replay_uses_stored_usd_response() -> None:
     claim = claim_snapshot("crypto_asset", "bitcoin", "USD", 67000.0)
     raw = b'{"bitcoin":{"usd":67000.0}}'
@@ -147,7 +141,6 @@ def test_coingecko_replay_uses_stored_usd_response() -> None:
     assert result["replay_status"] == "VERIFIED"
     assert result["observed_value"] == 67000.0
     assert result["network_calls"] == 0
-
 
 def test_replay_fails_closed_for_unknown_policy_or_bad_digest() -> None:
     claim = claim_snapshot()
@@ -169,8 +162,6 @@ def test_replay_fails_closed_for_unknown_policy_or_bad_digest() -> None:
         replay_verdict(verdict(("evidence-catalog",)), [corrupted])["reason_code"]
         == "EVIDENCE_INTEGRITY_OR_VERSION_MISMATCH"
     )
-
-
 
 def test_multi_source_replay_reduces_persisted_conflicting_observations() -> None:
     claim = claim_snapshot(unit="USD")
@@ -218,7 +209,6 @@ def test_multi_source_replay_reduces_persisted_conflicting_observations() -> Non
     assert result["policy_gate_revalidated"] is False
     assert result["reducer"]["usable_observation_count"] == 2
     assert result["network_calls"] == 0
-
 
 def test_multi_source_replay_fails_closed_when_conflict_is_not_reproduced() -> None:
     claim = claim_snapshot(unit="USD")
