@@ -17,6 +17,7 @@ POLICY_ID = "jamp2.provider-price-comparison"
 POLICY_VERSION = "provider-defaults-v1"
 PARSER_VERSION = "jamp-provider-json-v1"
 
+
 def _inconclusive(reason: str, verdict: VerdictRecord) -> dict[str, object]:
     return {
         "verdict_id": verdict.verdict_id,
@@ -33,6 +34,7 @@ def _inconclusive(reason: str, verdict: VerdictRecord) -> dict[str, object]:
         "network_calls": 0,
     }
 
+
 def _claim_snapshot(records: Sequence[EvidenceRecord]) -> dict[str, Any] | None:
     snapshot: dict[str, Any] | None = None
     for record in records:
@@ -47,6 +49,7 @@ def _claim_snapshot(records: Sequence[EvidenceRecord]) -> dict[str, Any] | None:
         elif claim != snapshot:
             return None
     return snapshot
+
 
 def _table_rows(payload: dict[str, Any], table_name: str) -> list[dict[str, Any]] | None:
     table = payload.get(table_name)
@@ -66,11 +69,13 @@ def _table_rows(payload: dict[str, Any], table_name: str) -> list[dict[str, Any]
         if isinstance(row, list) and len(row) == len(columns)
     ]
 
+
 def _finite_positive(value: object) -> float | None:
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         return None
     number = float(value)
     return number if math.isfinite(number) and number > 0 else None
+
 
 def _replay_moex(
     verdict: VerdictRecord,
@@ -120,6 +125,7 @@ def _replay_moex(
     status = "CONTRADICTED" if relative_delta > 0.05 else "VERIFIED"
     return status, "MOEX_PRICE_POLICY_V1", observed_price
 
+
 def _replay_coingecko(
     records: Sequence[EvidenceRecord],
     claim: dict[str, Any],
@@ -148,6 +154,7 @@ def _replay_coingecko(
             status = "CONTRADICTED" if relative_delta > 10.0 else "VERIFIED"
             return status, "COINGECKO_PRICE_POLICY_V1", observed
     return "OUT_OF_SCOPE", "COINGECKO_COIN_OR_PRICE_NOT_FOUND", None
+
 
 def _replay_multi_source_conflict(
     verdict: VerdictRecord,
@@ -232,6 +239,7 @@ def _replay_multi_source_conflict(
     if reducer.get("status") != "AMBIGUOUS":
         return "INCONCLUSIVE", "MULTI_SOURCE_CONFLICT_NOT_REPRODUCED", reducer
     return "AMBIGUOUS", "MULTI_SOURCE_CONFLICT_REPRODUCED", reducer
+
 
 def replay_verdict(
     verdict: VerdictRecord,
