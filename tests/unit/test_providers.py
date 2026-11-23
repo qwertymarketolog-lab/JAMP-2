@@ -240,6 +240,8 @@ def test_coingecko_last_updated_at_parser_is_explicit_and_fail_closed():
         ("missing", None, "MISSING", None),
         ("null", None, "MISSING", None),
         ("string", "1700000000", "INVALID_TYPE", None),
+        ("naive_iso", "2026-11-22T10:00:00", "INVALID_TYPE", None),
+        ("aware_iso", "2026-11-22T10:00:00+03:00", "INVALID_TYPE", None),
         ("boolean", True, "INVALID_TYPE", None),
         ("out_of_range", 1e100, "OUT_OF_RANGE", None),
         ("non_finite", float("inf"), "NON_FINITE", None),
