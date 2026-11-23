@@ -13,7 +13,7 @@ from jamp2.domain.claim import NormalizedClaim
 from jamp2.evidence.canonicalize import CANONICALIZATION_VERSION
 from jamp2.evidence.conflict import SourceObservation
 from jamp2.evidence.digest import compute_sha256
-from jamp2.evidence.model import EvidenceRecord
+from jamp2.evidence.model import EvidenceRecord, IntegrityViolation
 from jamp2.evidence.multisource import (
     MultiSourcePolicy,
     SourceOutcome,
@@ -302,7 +302,7 @@ def _replay_multi_source_conflict(
         arbitration = arbitrate_from_evidence(
             claim, policy, tuple(outcomes), records, now=evaluation_time
         )
-    except (KeyError, TypeError, ValueError, OverflowError):
+    except (IntegrityViolation, KeyError, TypeError, ValueError, OverflowError):
         return "INCONCLUSIVE", "POLICY_REPLAY_CONTEXT_INVALID", {}
     gate_observations = [
         {
