@@ -10,6 +10,7 @@ from datetime import UTC, datetime
 
 import httpx
 import pytest
+from ledger_fencing import append_evidence_owned
 from sqlalchemy import text
 
 from jamp2.api.app import create_app
@@ -175,7 +176,9 @@ def test_api_server_verifies_claim_persists_raw_evidence_and_reads_it() -> None:
 
 def test_api_returns_503_when_ledger_is_unavailable() -> None:
     class UnavailableLedger:
-        async def append(self, record: EvidenceRecord) -> EvidenceRecord:
+        async def append(
+            self, record: EvidenceRecord, *, key_hash: str, owner_token: str
+        ) -> EvidenceRecord:
             raise LedgerUnavailable("database offline")
 
         async def get(self, evidence_id: str) -> None:
@@ -201,7 +204,8 @@ def test_api_returns_500_on_integrity_violation() -> None:
         ledger = PostgresLedger(DATABASE_URL)
         await reset_ledger(ledger)
         raw = b'{"price":100}'
-        await ledger.append(
+        await append_evidence_owned(
+            ledger,
             EvidenceRecord(
                 evidence_id="api-tamper",
                 claim_id="api-claim",

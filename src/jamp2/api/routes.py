@@ -39,9 +39,13 @@ from jamp2.providers.moex import MoexProvider
 
 
 class EvidenceLedger(Protocol):
-    async def append(self, record: EvidenceRecord) -> EvidenceRecord: ...
+    async def append(
+        self, record: EvidenceRecord, *, key_hash: str, owner_token: str
+    ) -> EvidenceRecord: ...
     async def get(self, evidence_id: str) -> EvidenceRecord | None: ...
-    async def append_verdict(self, record: VerdictRecord) -> VerdictRecord: ...
+    async def append_verdict(
+        self, record: VerdictRecord, *, key_hash: str, owner_token: str
+    ) -> VerdictRecord: ...
     async def get_verdict(self, verdict_id: str) -> VerdictRecord | None: ...
     async def list_by_claim(self, claim_id: str) -> list[EvidenceRecord]: ...
     async def begin_idempotency(
@@ -309,11 +313,7 @@ def build_router(
                 request_digest=request_digest,
                 claim_id=claim_id,
             ))
-            if len(reservation) == 2:  # Compatibility for existing in-memory test ledgers.
-                idempotency_state, cached_response = reservation
-                owner_token = None
-            else:
-                idempotency_state, owner_token, cached_response = reservation
+            idempotency_state, owner_token, cached_response = reservation
         except LedgerUnavailable as exc:
             return _ledger_error(exc)
         if idempotency_state == "COMPLETED":
@@ -343,13 +343,18 @@ def build_router(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 content={"error": "IDEMPOTENCY_STATE_INVALID"},
             )
+        if not isinstance(owner_token, str) or not owner_token:
+            return JSONResponse(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                content={"error": "IDEMPOTENCY_OWNER_TOKEN_MISSING"},
+            )
 
         async def mark_failed() -> JSONResponse | None:
             try:
                 await ledger.fail_idempotency(
                     key_hash=key_hash,
                     request_digest=request_digest,
-                    **({"owner_token": owner_token} if owner_token is not None else {}),
+                    owner_token=owner_token,
                 )
             except (LedgerUnavailable, IntegrityViolation) as exc:
                 return _ledger_error(exc)
@@ -407,7 +412,11 @@ def build_router(
                                 else "SOURCE_RESPONSE_CAPTURED"
                             ),
                         )
-                        records.append(await ledger.append(record))
+                        records.append(
+                            await ledger.append(
+                                record, key_hash=key_hash, owner_token=owner_token
+                            )
+                        )
                 else:
                     # A failed/no-response attempt is still a durable ledger observation.
                     empty_body = b""
@@ -427,7 +436,9 @@ def build_router(
                         provider_adapter_version=outcome.source.adapter_version,
                         parser_version="jamp-provider-json-v1",
                     )
-                    records.append(await ledger.append(record))
+                    records.append(
+                        await ledger.append(record, key_hash=key_hash, owner_token=owner_token)
+                    )
 
             # Read the claim's complete evidence set through the chain-verifying API.
             persisted_records = await ledger.list_by_claim(claim_id)
@@ -479,7 +490,9 @@ def build_router(
             ),
         )
         try:
-            stored_verdict = await ledger.append_verdict(verdict_record)
+            stored_verdict = await ledger.append_verdict(
+                verdict_record, key_hash=key_hash, owner_token=owner_token
+            )
         except (DuplicateVerdict, IntegrityViolation, LedgerUnavailable) as exc:
             failure_response = await mark_failed()
             if failure_response is not None:
@@ -529,7 +542,7 @@ def build_router(
                 request_digest=request_digest,
                 verdict_id=stored_verdict.verdict_id,
                 response_payload=response_payload,
-                **({"owner_token": owner_token} if owner_token is not None else {}),
+                owner_token=owner_token,
             )
         except (IntegrityViolation, LedgerUnavailable) as exc:
             return _ledger_error(exc)

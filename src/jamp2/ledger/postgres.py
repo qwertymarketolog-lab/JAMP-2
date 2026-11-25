@@ -39,6 +39,10 @@ from jamp2.evidence.model import EvidenceRecord, IntegrityViolation, JSONValue, 
 from jamp2.evidence.verdict import VerdictRecord
 
 
+class StaleLeaseError(IntegrityViolation):
+    """Raised when an append is not fenced by the current live reservation owner."""
+
+
 class DuplicateEvidence(LedgerError):
     """Raised when evidence_id already exists."""
 
@@ -196,12 +200,62 @@ class PostgresLedger:
             raise ValueError("DATABASE_URL is not set")
         self.engine = create_async_engine(url, pool_pre_ping=True)
 
-    async def append(self, record: EvidenceRecord) -> EvidenceRecord:
-        """Atomically link and append an evidence record."""
+    async def _lock_and_validate_owner(
+        self,
+        connection: Any,
+        *,
+        key_hash: str,
+        owner_token: str,
+        claim_id: str,
+    ) -> None:
+        """Lock and validate the live reservation before taking any chain lock."""
+        if not key_hash or not owner_token:
+            raise StaleLeaseError("append requires a reservation key and owner token")
+        result = await connection.execute(
+            text(
+                """
+                SELECT owner_token, claim_id, status, lease_expires_at
+                FROM idempotency_records
+                WHERE key_hash = :key_hash
+                FOR UPDATE
+                """
+            ),
+            {"key_hash": key_hash},
+        )
+        reservation = result.mappings().one_or_none()
+        if reservation is None:
+            raise StaleLeaseError("idempotency reservation is missing")
+        if reservation["owner_token"] != owner_token:
+            raise StaleLeaseError("idempotency reservation owner changed")
+        if reservation["claim_id"] != claim_id:
+            raise StaleLeaseError("idempotency reservation claim does not match append")
+        if reservation["status"] != "PENDING":
+            raise StaleLeaseError("idempotency reservation is not pending")
+        # Evaluate database time only after FOR UPDATE has acquired the row lock.
+        clock_result = await connection.execute(select(func.clock_timestamp()))
+        database_now = clock_result.scalar_one()
+        lease_expires_at = reservation["lease_expires_at"]
+        if lease_expires_at is None or lease_expires_at <= database_now:
+            raise StaleLeaseError("idempotency reservation lease expired")
+
+    async def append(
+        self,
+        record: EvidenceRecord,
+        *,
+        key_hash: str,
+        owner_token: str,
+    ) -> EvidenceRecord:
+        """Atomically fence, link, and append an evidence record."""
         if compute_sha256(record.raw_body_bytes) != record.raw_sha256:
             raise IntegrityViolation("raw_sha256 does not match raw_body_bytes")
         try:
             async with self.engine.begin() as connection:
+                await self._lock_and_validate_owner(
+                    connection,
+                    key_hash=key_hash,
+                    owner_token=owner_token,
+                    claim_id=record.claim_id,
+                )
                 await connection.execute(
                     text("SELECT pg_advisory_xact_lock(:lock_key)"),
                     {"lock_key": _LOCK_KEY},
@@ -249,10 +303,22 @@ class PostgresLedger:
         except SQLAlchemyError as exc:
             raise LedgerUnavailable("PostgreSQL evidence append failed") from exc
 
-    async def append_verdict(self, record: VerdictRecord) -> VerdictRecord:
-        """Append a verdict only when all referenced evidence exists for its claim."""
+    async def append_verdict(
+        self,
+        record: VerdictRecord,
+        *,
+        key_hash: str,
+        owner_token: str,
+    ) -> VerdictRecord:
+        """Fence and append a verdict only when all referenced evidence exists."""
         try:
             async with self.engine.begin() as connection:
+                await self._lock_and_validate_owner(
+                    connection,
+                    key_hash=key_hash,
+                    owner_token=owner_token,
+                    claim_id=record.claim_id,
+                )
                 await connection.execute(
                     text("SELECT pg_advisory_xact_lock(:lock_key)"),
                     {"lock_key": _VERDICT_LOCK_KEY},
