@@ -31,6 +31,12 @@ the database default; no historical evidence or verdict hashes are rewritten.
 The migration is safe on populated ledgers. Downgrade removes the new metadata
 columns and therefore is not a preservation mechanism for v2-only metadata.
 
+**Production downgrade prohibition:** Migration 008 downgrade is destructive
+and is valid only in development environments. Production deployments MUST
+NOT downgrade migration 008. Any production rollback involving migration 008
+requires a data-migration plan approved by the architecture owner and verified
+before execution.
+
 ## Provider rules
 
 - MOEX ISS securities `marketdata.SYSTIME` is retained as raw source data only.
