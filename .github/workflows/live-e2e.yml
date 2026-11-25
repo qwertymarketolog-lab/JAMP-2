@@ -69,16 +69,10 @@ jobs:
           cache: pip
       - name: Install project, test tools, and ASGI server
         run: python -m pip install -e ".[dev]" uvicorn
-      - name: Prepare evidence output directory
-        run: mkdir -p tests/e2e/artifacts
-      - name: Capture MOEX TLS chain and Python trust store
-        if: inputs.target == 'moex' || inputs.target == 'both'
-        run: >-
-          python scripts/moex_tls_diagnostics.py
-          --host iss.moex.com
-          --output tests/e2e/artifacts/moex-tls-diagnostics.json
       - name: Apply database migrations
         run: alembic upgrade head
+      - name: Prepare evidence output directory
+        run: mkdir -p tests/e2e/artifacts
       - name: Run explicitly selected live scenarios
         env:
           JAMP_RUN_LIVE: "1"
