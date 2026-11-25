@@ -11,8 +11,8 @@ from unittest.mock import patch
 from scripts.moex_tls_diagnostics import (
     _OFFICIAL_CA,
     _scan_trust_store,
-    collect_tls_diagnostics,
     collect_official_ca_audit,
+    collect_tls_diagnostics,
     python_trust_store_report,
     write_report,
 )
