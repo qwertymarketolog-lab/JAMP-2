@@ -188,7 +188,9 @@ def test_moex_failure_phase_and_original_cause_survive_to_ledger() -> None:
         assert failure.http_status is None
         assert failure.raw_body_bytes == b""
         assert failure.body_complete is False
+        assert isinstance(failure.parsed_value, dict)
         details = failure.parsed_value["provider_result"]
+        assert isinstance(details, dict)
         assert details["reason"] == "MOEX_SOURCE_UNAVAILABLE_OR_INVALID"
         assert details["error_type"] == "URLError"
         assert details["phase"] == "securities"
