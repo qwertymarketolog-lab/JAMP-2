@@ -65,6 +65,12 @@ class MemoryLedger:
         self.records.append(persisted)
         return persisted
 
+    async def get(self, evidence_id: str) -> EvidenceRecord | None:
+        return next(
+            (record for record in self.records if record.evidence_id == evidence_id),
+            None,
+        )
+
     async def list_by_claim(self, claim_id: str) -> list[EvidenceRecord]:
         return [record for record in self.records if record.claim_id == claim_id]
 
@@ -75,6 +81,12 @@ class MemoryLedger:
         assert reservation["owner_token"] == owner_token
         self.verdicts.append(record)
         return record
+
+    async def get_verdict(self, verdict_id: str) -> VerdictRecord | None:
+        return next(
+            (record for record in self.verdicts if record.verdict_id == verdict_id),
+            None,
+        )
 
     async def complete_idempotency(
         self, *, key_hash: str, request_digest: str, verdict_id: str,
