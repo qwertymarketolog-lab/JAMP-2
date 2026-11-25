@@ -184,6 +184,7 @@ def _failure_diagnostics(
     securities_columns: list[str] | None = None,
     parse_error: str | None = None,
     tried_fields: list[str] | None = None,
+    phase: str | None = None,
 ) -> dict[str, Any]:
     if isinstance(exc, urllib.error.HTTPError):
         http_status = exc.code
@@ -201,6 +202,7 @@ def _failure_diagnostics(
         "securities_columns": securities_columns,
         "parse_error": parse_error,
         "tried_fields": list(tried_fields or []),
+        "phase": phase,
     }
 
 
@@ -302,7 +304,9 @@ def _verify_claim_with_moex(
             "reason": "MOEX_SOURCE_UNAVAILABLE_OR_INVALID",
             "error_type": type(exc).__name__,
             "checked_source": "moex.iss",
-            **_failure_diagnostics(exc=exc, securities_columns=securities_columns),
+            **_failure_diagnostics(
+                exc=exc, securities_columns=securities_columns, phase="securities"
+            ),
         }
 
     match = next(
@@ -380,6 +384,7 @@ def _verify_claim_with_moex(
                 marketdata_columns=marketdata_columns,
                 marketdata_rows_count=marketdata_rows_count,
                 tried_fields=PRICE_FIELDS,
+                phase="marketdata",
             ),
         }
 
