@@ -9,7 +9,10 @@ from typing import Any
 from unittest.mock import patch
 
 from scripts.moex_tls_diagnostics import (
+    _OFFICIAL_CA,
+    _scan_trust_store,
     collect_tls_diagnostics,
+    collect_official_ca_audit,
     python_trust_store_report,
     write_report,
 )
@@ -43,8 +46,12 @@ def test_tls_chain_and_trust_store_fields_are_saved(tmp_path: Path) -> None:
             )
         return subprocess.CompletedProcess(command, 0, output, b"")
 
+    def offline_downloader(*_: Any, **__: Any) -> Any:
+        raise OSError("network disabled in unit test")
+
     report = collect_tls_diagnostics(
-        "iss.moex.com", runner=fake_runner, openssl_path="/usr/bin/openssl"
+        "iss.moex.com", runner=fake_runner, openssl_path="/usr/bin/openssl",
+        downloader=offline_downloader,
     )
     output = tmp_path / "artifacts" / "moex-tls-diagnostics.json"
     write_report(report, output)
@@ -101,3 +108,51 @@ def test_python_trust_store_report_identifies_verified_default_context() -> None
         "cafile_exists",
         "capath_exists",
     }
+
+
+
+def test_official_ca_download_failures_are_explicit_and_fail_closed() -> None:
+    def offline_downloader(*_: Any, **__: Any) -> Any:
+        raise OSError("offline")
+
+    def fake_runner(
+        command: list[str], **kwargs: Any
+    ) -> subprocess.CompletedProcess[bytes]:
+        return subprocess.CompletedProcess(command, 0, b"", b"")
+
+    report = collect_official_ca_audit(
+        [], "iss.moex.com", runner=fake_runner,
+        openssl="/usr/bin/openssl", downloader=offline_downloader,
+    )
+
+    assert report["certificates"]["root"]["downloaded"] is False
+    assert "OSError: offline" == report["certificates"]["root"]["error"]
+    assert report["certificates"]["root"]["fingerprint_match"] is False
+    assert report["trust_store_membership"] is None
+    assert report["chain_verification"]["status"] == "NOT_RUN"
+    assert report["chain_verification"]["trust_store_modified"] is False
+
+
+def test_trust_store_membership_uses_exact_root_der_fingerprint(tmp_path: Path) -> None:
+    bundle = tmp_path / "ca-bundle.pem"
+    bundle.write_bytes(_FAKE_PEM)
+    capath = tmp_path / "certs"
+    capath.mkdir()
+
+    expected = _OFFICIAL_CA["root"]["sha256"]
+
+    def fake_runner(
+        command: list[str], **kwargs: Any
+    ) -> subprocess.CompletedProcess[bytes]:
+        return subprocess.CompletedProcess(
+            command, 0, f"sha256 Fingerprint={expected}\n".encode(), b""
+        )
+
+    report = _scan_trust_store(
+        openssl="/usr/bin/openssl", runner=fake_runner,
+        cafile=str(bundle), capath=str(capath),
+    )
+
+    assert report["scanned_files"] == 1
+    assert report["root_sha256_present"] is True
+    assert report["root_sha256"] == expected
