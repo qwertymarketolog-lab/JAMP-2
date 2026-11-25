@@ -14,16 +14,8 @@ from sqlalchemy import text
 from jamp2.api.app import create_app
 from jamp2.domain.claim import NormalizedClaim
 from jamp2.evidence.digest import compute_sha256
-from jamp2.evidence.multisource import (
-    MultiSourcePolicy,
-    SourceSpec,
-)
 from jamp2.evidence.verdict import VerdictRecord
-from jamp2.ledger.postgres import (
-    EvidenceRow,
-    IntegrityViolation,
-    PostgresLedger,
-)
+from jamp2.ledger.postgres import IntegrityViolation, PostgresLedger
 from jamp2.providers.base import ProviderResult
 
 DATABASE_URL = os.getenv("DATABASE_URL")
