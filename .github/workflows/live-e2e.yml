@@ -1,0 +1,105 @@
+name: JAMP-2 Live E2E
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm_live:
+        description: 'Type "yes" to authorize real provider HTTP requests'
+        required: true
+        type: string
+      target:
+        description: Scenario to execute
+        required: true
+        type: choice
+        options:
+          - coingecko
+          - moex
+          - both
+
+permissions:
+  contents: read
+
+jobs:
+  guard:
+    name: Require explicit live authorization
+    runs-on: ubuntu-latest
+    steps:
+      - name: Fail closed unless confirm_live is yes
+        env:
+          CONFIRM_LIVE: ${{ inputs.confirm_live }}
+        run: |
+          if [ "$CONFIRM_LIVE" != "yes" ]; then
+            echo "::error::Live provider calls require confirm_live=yes"
+            exit 1
+          fi
+
+  live-e2e:
+    name: Live provider E2E (PostgreSQL 16)
+    needs: guard
+    if: inputs.confirm_live == 'yes'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: jamp2
+          POSTGRES_PASSWORD: jamp2
+          POSTGRES_DB: jamp2
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U jamp2 -d jamp2"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgresql+asyncpg://jamp2:jamp2@localhost:5432/jamp2
+      JAMP2_API_KEY: live-e2e-${{ github.run_id }}-${{ github.run_attempt }}
+      JAMP2_CODE_VERSION: ${{ github.sha }}
+    steps:
+      - name: Checkout exact workflow commit
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install project, test tools, and ASGI server
+        run: python -m pip install -e ".[dev]" uvicorn
+      - name: Apply database migrations
+        run: alembic upgrade head
+      - name: Prepare evidence output directory
+        run: mkdir -p tests/e2e/artifacts
+      - name: Start local API against PostgreSQL
+        run: |
+          nohup python -m uvicorn jamp2.api.app:app --host 127.0.0.1 --port 8765 \
+            > /tmp/jamp2-live-api.log 2>&1 &
+          echo $! > /tmp/jamp2-live-api.pid
+          for attempt in $(seq 1 60); do
+            if curl --fail --silent http://127.0.0.1:8765/openapi.json >/dev/null; then
+              echo "API_READY"
+              exit 0
+            fi
+            sleep 1
+          done
+          cat /tmp/jamp2-live-api.log
+          exit 1
+      - name: Run explicitly selected live scenarios
+        env:
+          JAMP_RUN_LIVE: "1"
+          JAMP_LIVE_TARGET: ${{ inputs.target }}
+        run: |
+          pytest tests/e2e/ -m live -v --junitxml=junit-live-e2e.xml
+      - name: Upload raw evidence and test report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: live-e2e-evidence-${{ github.run_id }}
+          path: |
+            tests/e2e/artifacts/
+            junit-live-e2e.xml
+            /tmp/jamp2-live-api.log
+          if-no-files-found: warn
