@@ -9,8 +9,10 @@ from __future__ import annotations
 import base64
 import hashlib
 import json
+import logging
 import math
 import re
+import socket
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -27,6 +29,8 @@ E4_CONTRADICTED = "E4_CONTRADICTED"
 E4_OUT_OF_SCOPE = "E4_OUT_OF_SCOPE"
 E4_INCONCLUSIVE = "E4_INCONCLUSIVE"
 PRICE_FIELDS = ["LAST", "MARKETPRICE", "MARKETPRICE2"]
+
+logger = logging.getLogger(__name__)
 
 
 def _moex_capture_metadata(payload: dict[str, Any]) -> dict[str, Any]:
@@ -93,6 +97,7 @@ def _moex_capture_metadata(payload: dict[str, Any]) -> dict[str, Any]:
 def _get_json(
     url: str,
     timeout: float,
+    phase: str,
     raw_evidence: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     request = urllib.request.Request(
@@ -117,6 +122,23 @@ def _get_json(
                 "raw_body_base64": base64.b64encode(body).decode("ascii"),
                 "sha256_body": hashlib.sha256(body).hexdigest(),
             })
+        raise
+    except urllib.error.URLError as exc:
+        # Connection-establishment timeouts are wrapped in URLError(reason=timeout).
+        # DNS, refused-connection, and TLS errors are re-raised without timeout logging.
+        is_timeout = isinstance(exc.reason, (TimeoutError, socket.timeout))
+        if is_timeout:
+            logger.error(
+                "MOEX timeout (URLError): url=%s, timeout=%.1fs, phase=%s, reason=%r",
+                url, timeout, phase, exc.reason,
+            )
+        raise
+    except TimeoutError:
+        # Response-read timeouts may propagate directly as TimeoutError.
+        logger.error(
+            "MOEX timeout (direct): url=%s, timeout=%.1fs, phase=%s",
+            url, timeout, phase,
+        )
         raise
     capture = None
     if raw_evidence is not None:
@@ -256,7 +278,12 @@ def _verify_claim_with_moex(
     )
     securities_columns: list[str] | None = None
     try:
-        catalog = _get_json(f"{MOEX_ISS_BASE}/securities.json?{query}", timeout, raw_evidence)
+        catalog = _get_json(
+            f"{MOEX_ISS_BASE}/securities.json?{query}",
+            timeout,
+            phase="securities",
+            raw_evidence=raw_evidence,
+        )
         securities_table = catalog.get("securities")
         if isinstance(securities_table, dict) and isinstance(securities_table.get("columns"), list):
             securities_columns = [
@@ -321,7 +348,12 @@ def _verify_claim_with_moex(
     marketdata_columns: list[str] | None = None
     marketdata_rows_count: int | None = None
     try:
-        market = _get_json(price_url, timeout, raw_evidence)
+        market = _get_json(
+            price_url,
+            timeout,
+            phase="marketdata",
+            raw_evidence=raw_evidence,
+        )
         marketdata_table = market.get("marketdata")
         if isinstance(marketdata_table, dict) and isinstance(marketdata_table.get("columns"), list):
             marketdata_columns = [

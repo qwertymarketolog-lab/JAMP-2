@@ -73,20 +73,6 @@ jobs:
         run: alembic upgrade head
       - name: Prepare evidence output directory
         run: mkdir -p tests/e2e/artifacts
-      - name: Start local API against PostgreSQL
-        run: |
-          nohup python -m uvicorn jamp2.api.app:app --host 127.0.0.1 --port 8765 \
-            > /tmp/jamp2-live-api.log 2>&1 &
-          echo $! > /tmp/jamp2-live-api.pid
-          for attempt in $(seq 1 60); do
-            if curl --fail --silent http://127.0.0.1:8765/openapi.json >/dev/null; then
-              echo "API_READY"
-              exit 0
-            fi
-            sleep 1
-          done
-          cat /tmp/jamp2-live-api.log
-          exit 1
       - name: Run explicitly selected live scenarios
         env:
           JAMP_RUN_LIVE: "1"
@@ -101,5 +87,4 @@ jobs:
           path: |
             tests/e2e/artifacts/
             junit-live-e2e.xml
-            /tmp/jamp2-live-api.log
           if-no-files-found: warn
