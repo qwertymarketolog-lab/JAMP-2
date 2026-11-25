@@ -26,6 +26,16 @@ _CERTIFICATE_RE = re.compile(
 )
 _VERIFY_RE = re.compile(r"Verify return code:\s*(\d+)\s*\(([^)]*)\)")
 
+_OFFICIAL_CA = {
+    "root": {
+        "url": "http://nuc-cdp.digital.gov.ru/cdp/rootca_ssl_rsa2022.crt",
+        "sha256": "D26D2D0231B7C39F92CC738512BA54103519E4405D68B5BD703E9788CA8ECF31",
+    },
+    "sub": {
+        "url": "http://nuc-cdp.digital.gov.ru/cdp/subca_ssl_rsa2024.crt",
+        "sha256": "2155785036C900DBB5F1BB2A1569C80C55595BD6BF94867A29BBDDBC7D88A3F2",
+    },
+}
 
 def python_trust_store_report() -> dict[str, Any]:
     """Describe the default SSL context used by urllib's HTTPS handler."""
@@ -254,8 +264,8 @@ def collect_official_ca_audit(
             verify = runner(
                 [
                     openssl, "verify", "-verbose", "-CAfile", str(root_path),
-                    "-untrusted", str(sub_path), "-verify_hostname", host,
-                    str(leaf_path),
+                    "-no-CApath", "-no-CAstore", "-untrusted", str(sub_path),
+                    "-verify_hostname", host, str(leaf_path),
                 ],
                 capture_output=True,
                 check=False,
