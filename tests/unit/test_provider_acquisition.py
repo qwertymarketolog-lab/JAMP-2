@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import socket
 import urllib.error
 import uuid
 from dataclasses import replace
@@ -180,7 +181,9 @@ def test_moex_failure_phase_and_original_cause_survive_to_ledger() -> None:
         )
         with patch(
             "urllib.request.urlopen",
-            side_effect=urllib.error.URLError("frozen connection failure"),
+            side_effect=urllib.error.URLError(
+                socket.gaierror(-3, "Temporary failure in name resolution")
+            ),
         ):
             async with httpx.AsyncClient(
                 transport=httpx.ASGITransport(app=app),
@@ -206,6 +209,21 @@ def test_moex_failure_phase_and_original_cause_survive_to_ledger() -> None:
         assert details["reason"] == "MOEX_SOURCE_UNAVAILABLE_OR_INVALID"
         assert details["error_type"] == "URLError"
         assert details["phase"] == "securities"
+        assert details["request_url"] == (
+            "https://iss.moex.com/iss/securities.json?"
+            "q=SBER&iss.meta=off&iss.only=securities&"
+            "securities.columns=secid%2Cshortname%2Clatinname%2Cemitent_title"
+        )
+        assert details["error_reason_type"] == "gaierror"
+        assert details["error_reason"] == (
+            "[Errno -3] Temporary failure in name resolution"
+        )
+        assert details["error_reason_repr"] == (
+            "gaierror(-3, 'Temporary failure in name resolution')"
+        )
+        assert details["error_message"] == (
+            "<urlopen error [Errno -3] Temporary failure in name resolution>"
+        )
         assert details["capture_status"] == "EVIDENCE_NOT_CAPTURED"
         assert details["capture_reason"] == "SOURCE_EVIDENCE_NOT_CAPTURED"
 
