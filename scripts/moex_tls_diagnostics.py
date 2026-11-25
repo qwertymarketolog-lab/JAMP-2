@@ -279,6 +279,7 @@ def collect_tls_diagnostics(
     *,
     runner: Any = subprocess.run,
     openssl_path: str | None = None,
+    downloader: Any = urllib.request.urlopen,
 ) -> dict[str, Any]:
     """Collect peer-sent certificates while retaining normal TLS verification."""
     openssl = openssl_path or shutil.which("openssl")
@@ -351,7 +352,8 @@ def collect_tls_diagnostics(
     ]
     report["certificate_count"] = len(certificates)
     report["official_ca_audit"] = collect_official_ca_audit(
-        report["certificate_chain"], host, runner=runner, openssl=openssl
+        report["certificate_chain"], host, runner=runner, openssl=openssl,
+        downloader=downloader,
     )
     return report
 
