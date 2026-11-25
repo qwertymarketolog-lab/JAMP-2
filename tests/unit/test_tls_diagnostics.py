@@ -6,6 +6,7 @@ import json
 import subprocess
 from pathlib import Path
 from typing import Any
+from unittest.mock import patch
 
 from scripts.moex_tls_diagnostics import (
     collect_tls_diagnostics,
@@ -78,9 +79,10 @@ def test_tls_diagnostics_reports_missing_openssl_without_network() -> None:
     def unexpected_runner(*_: Any, **__: Any) -> subprocess.CompletedProcess[bytes]:
         raise AssertionError("runner must not be called when openssl is unavailable")
 
-    report = collect_tls_diagnostics(
-        "iss.moex.com", runner=unexpected_runner, openssl_path=None
-    )
+    with patch("scripts.moex_tls_diagnostics.shutil.which", return_value=None):
+        report = collect_tls_diagnostics(
+            "iss.moex.com", runner=unexpected_runner, openssl_path=None
+        )
     assert report["openssl_path"] is None
     assert report["probe_error"] == "openssl executable not found"
     assert report["certificate_chain"] == []
