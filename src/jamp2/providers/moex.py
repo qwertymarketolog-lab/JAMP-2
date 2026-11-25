@@ -12,6 +12,7 @@ import json
 import logging
 import math
 import re
+import socket
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -107,12 +108,6 @@ def _get_json(
         with urllib.request.urlopen(request, timeout=timeout) as response:
             body = response.read()
             status_code = getattr(response, "status", 200)
-    except TimeoutError:
-        logger.error(
-            "MOEX timeout: url=%s, timeout=%.1fs, phase=%s",
-            url, timeout, phase,
-        )
-        raise
     except urllib.error.HTTPError as exc:
         body = exc.read()
         if raw_evidence is not None:
@@ -127,6 +122,23 @@ def _get_json(
                 "raw_body_base64": base64.b64encode(body).decode("ascii"),
                 "sha256_body": hashlib.sha256(body).hexdigest(),
             })
+        raise
+    except urllib.error.URLError as exc:
+        # Connection-establishment timeouts are wrapped in URLError(reason=timeout).
+        # DNS, refused-connection, and TLS errors are re-raised without timeout logging.
+        is_timeout = isinstance(exc.reason, (TimeoutError, socket.timeout))
+        if is_timeout:
+            logger.error(
+                "MOEX timeout (URLError): url=%s, timeout=%.1fs, phase=%s, reason=%r",
+                url, timeout, phase, exc.reason,
+            )
+        raise
+    except TimeoutError:
+        # Response-read timeouts may propagate directly as TimeoutError.
+        logger.error(
+            "MOEX timeout (direct): url=%s, timeout=%.1fs, phase=%s",
+            url, timeout, phase,
+        )
         raise
     capture = None
     if raw_evidence is not None:
