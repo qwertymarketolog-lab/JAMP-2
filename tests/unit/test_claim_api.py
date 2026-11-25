@@ -6,6 +6,7 @@ import asyncio
 import base64
 import hashlib
 import time
+import uuid
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -40,7 +41,12 @@ class MemoryLedger:
         self.verdicts: list[VerdictRecord] = []
         self.idempotency: dict[str, dict[str, Any]] = {}
 
-    async def append(self, record: EvidenceRecord) -> EvidenceRecord:
+    async def append(
+        self, record: EvidenceRecord, *, key_hash: str, owner_token: str
+    ) -> EvidenceRecord:
+        row = self.idempotency[key_hash]
+        assert row["owner_token"] == owner_token
+        assert row["claim_id"] == record.claim_id
         persisted = replace(record, record_hash=compute_record_hash(record))
         self.records.append(persisted)
         return persisted
@@ -51,7 +57,12 @@ class MemoryLedger:
             None,
         )
 
-    async def append_verdict(self, record: VerdictRecord) -> VerdictRecord:
+    async def append_verdict(
+        self, record: VerdictRecord, *, key_hash: str, owner_token: str
+    ) -> VerdictRecord:
+        row = self.idempotency[key_hash]
+        assert row["owner_token"] == owner_token
+        assert row["claim_id"] == record.claim_id
         self.verdicts.append(record)
         return record
 
@@ -66,37 +77,44 @@ class MemoryLedger:
 
     async def begin_idempotency(
         self, *, key_hash: str, request_digest: str, claim_id: str
-    ) -> tuple[str, dict[str, Any] | None]:
+    ) -> tuple[str, str | None, dict[str, Any] | None]:
         existing = self.idempotency.get(key_hash)
         if existing is None:
+            owner_token = uuid.uuid4().hex
             self.idempotency[key_hash] = {
                 "request_digest": request_digest,
                 "claim_id": claim_id,
                 "status": "PENDING",
+                "owner_token": owner_token,
                 "response_payload": None,
             }
-            return "NEW", None
+            return "NEW", owner_token, None
         if existing["request_digest"] != request_digest:
-            return "KEY_REUSED", None
+            return "KEY_REUSED", None, None
         if existing["status"] == "COMPLETED":
-            return "COMPLETED", existing["response_payload"]
+            return "COMPLETED", None, existing["response_payload"]
         if existing["status"] == "PENDING":
-            return "IN_PROGRESS", None
-        return "FAILED", None
+            return "IN_PROGRESS", None, None
+        return "FAILED", None, None
 
     async def complete_idempotency(
         self, *, key_hash: str, request_digest: str, verdict_id: str,
-        response_payload: dict[str, Any]
+        response_payload: dict[str, Any],
+        owner_token: str,
     ) -> None:
         row = self.idempotency[key_hash]
         assert row["request_digest"] == request_digest
+        assert row["owner_token"] == owner_token
         row["status"] = "COMPLETED"
         row["verdict_id"] = verdict_id
         row["response_payload"] = response_payload
 
-    async def fail_idempotency(self, *, key_hash: str, request_digest: str) -> None:
+    async def fail_idempotency(
+        self, *, key_hash: str, request_digest: str, owner_token: str
+    ) -> None:
         row = self.idempotency[key_hash]
         assert row["request_digest"] == request_digest
+        assert row["owner_token"] == owner_token
         row["status"] = "FAILED"
 
 

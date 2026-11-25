@@ -7,6 +7,10 @@ import os
 from datetime import UTC, datetime
 
 import pytest
+from ledger_fencing import (
+    append_evidence_owned,
+    append_verdict_owned,
+)
 from sqlalchemy import text
 from sqlalchemy.exc import DBAPIError
 
@@ -72,7 +76,7 @@ def test_truncate_evidence_is_blocked_and_record_survives() -> None:
     async def run() -> None:
         ledger = PostgresLedger(DATABASE_URL)
         await reset_ledger(ledger)
-        record = await ledger.append(make_evidence())
+        record = await append_evidence_owned(ledger, make_evidence())
         with pytest.raises(DBAPIError, match="TRUNCATE not allowed"):
             async with ledger.engine.begin() as connection:
                 await connection.execute(text("TRUNCATE TABLE evidence"))
@@ -88,8 +92,8 @@ def test_truncate_verdicts_is_blocked_and_record_survives() -> None:
     async def run() -> None:
         ledger = PostgresLedger(DATABASE_URL)
         await reset_ledger(ledger)
-        await ledger.append(make_evidence())
-        verdict = await ledger.append_verdict(make_verdict())
+        await append_evidence_owned(ledger, make_evidence())
+        verdict = await append_verdict_owned(ledger, make_verdict())
         with pytest.raises(DBAPIError, match="TRUNCATE not allowed"):
             async with ledger.engine.begin() as connection:
                 await connection.execute(text("TRUNCATE TABLE verdicts"))

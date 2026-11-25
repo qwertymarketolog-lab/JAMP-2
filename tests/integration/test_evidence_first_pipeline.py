@@ -9,6 +9,7 @@ from datetime import UTC, datetime
 
 import httpx
 import pytest
+from ledger_fencing import append_verdict_owned
 from sqlalchemy import text
 
 from jamp2.api.app import create_app
@@ -291,7 +292,7 @@ def test_missing_evidence_rejects_verdict() -> None:
         ledger = PostgresLedger(DATABASE_URL)
         await reset_ledger(ledger)
         with pytest.raises(IntegrityViolation, match="missing evidence"):
-            await ledger.append_verdict(make_verdict("evidence-does-not-exist"))
+            await append_verdict_owned(ledger, make_verdict("evidence-does-not-exist"))
         assert await ledger.verify_verdict_chain()
         await ledger.close()
 
@@ -312,8 +313,10 @@ def test_evidence_append_before_verdict_append(monkeypatch: pytest.MonkeyPatch) 
         original_gate = multisource.evaluate_source_policy
         original_reducer = multisource.detect_conflicts
 
-        async def append_spy(record):
-            stored = await original_append(record)
+        async def append_spy(record, *, key_hash, owner_token):
+            stored = await original_append(
+                record, key_hash=key_hash, owner_token=owner_token
+            )
             events.append("append")
             return stored
 
@@ -331,7 +334,7 @@ def test_evidence_append_before_verdict_append(monkeypatch: pytest.MonkeyPatch) 
             events.append("reducer")
             return original_reducer(observations)
 
-        async def append_verdict_spy(record):
+        async def append_verdict_spy(record, *, key_hash, owner_token):
             async with ledger.engine.connect() as connection:
                 persisted_count = await connection.scalar(
                     text("SELECT count(*) FROM evidence WHERE claim_id = :claim_id"),
@@ -339,7 +342,9 @@ def test_evidence_append_before_verdict_append(monkeypatch: pytest.MonkeyPatch) 
                 )
             assert persisted_count == len(record.evidence_ids) == 2
             events.append("append_verdict")
-            return await original_append_verdict(record)
+            return await original_append_verdict(
+                record, key_hash=key_hash, owner_token=owner_token
+            )
 
         monkeypatch.setattr(ledger, "append", append_spy)
         monkeypatch.setattr(ledger, "list_by_claim", read_back_spy)

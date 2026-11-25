@@ -8,6 +8,10 @@ from dataclasses import replace
 from datetime import UTC, datetime
 
 import pytest
+from ledger_fencing import (
+    append_evidence_owned,
+    append_verdict_owned,
+)
 from sqlalchemy import text
 
 from jamp2.evidence.digest import (
@@ -95,7 +99,7 @@ def test_v1_golden_evidence_and_verdict_chains_survive_postgres_reopen() -> None
                 make_evidence(f"evidence-{index}") for index in range(1, 4)
             )
             for index, record in enumerate(evidence_inputs):
-                stored = await ledger.append(record)
+                stored = await append_evidence_owned(ledger, record)
                 expected_parent = EVIDENCE_GOLDEN_HASHES[index - 1] if index else None
                 assert stored.parent_hash == expected_parent
                 assert compute_sha256(stored.raw_body_bytes) == RAW_SHA256
@@ -109,7 +113,7 @@ def test_v1_golden_evidence_and_verdict_chains_survive_postgres_reopen() -> None
                 ),
             )
             for index, record in enumerate(verdict_inputs):
-                stored = await ledger.append_verdict(record)
+                stored = await append_verdict_owned(ledger, record)
                 expected_parent = VERDICT_GOLDEN_HASHES[index - 1] if index else None
                 assert stored.parent_hash == expected_parent
                 assert compute_verdict_hash(stored) == VERDICT_GOLDEN_HASHES[index]

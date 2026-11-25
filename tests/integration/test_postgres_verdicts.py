@@ -8,6 +8,10 @@ from dataclasses import replace
 from datetime import UTC, datetime
 
 import pytest
+from ledger_fencing import (
+    append_evidence_owned,
+    append_verdict_owned,
+)
 from sqlalchemy import text
 from sqlalchemy.exc import DBAPIError
 
@@ -73,8 +77,8 @@ def test_verdict_persists_references_evidence_and_survives_restart() -> None:
     async def run() -> None:
         ledger = PostgresLedger(DATABASE_URL)
         await reset_ledger(ledger)
-        await ledger.append(make_evidence())
-        stored = await ledger.append_verdict(make_verdict())
+        await append_evidence_owned(ledger, make_evidence())
+        stored = await append_verdict_owned(ledger, make_verdict())
         assert stored.parent_hash is None
         assert await ledger.verify_verdict_chain()
         await ledger.close()
@@ -97,11 +101,11 @@ def test_verdict_rejects_missing_or_cross_claim_evidence() -> None:
         ledger = PostgresLedger(DATABASE_URL)
         await reset_ledger(ledger)
         with pytest.raises(IntegrityViolation, match="missing evidence"):
-            await ledger.append_verdict(make_verdict("not-present"))
-        await ledger.append(make_evidence())
+            await append_verdict_owned(ledger, make_verdict("not-present"))
+        await append_evidence_owned(ledger, make_evidence())
         wrong_claim = replace(make_verdict(), claim_id="different-claim")
         with pytest.raises(IntegrityViolation, match="another claim"):
-            await ledger.append_verdict(wrong_claim)
+            await append_verdict_owned(ledger, wrong_claim)
         await ledger.close()
 
     asyncio.run(run())
@@ -111,8 +115,8 @@ def test_verdict_database_trigger_rejects_update_and_delete() -> None:
     async def run() -> None:
         ledger = PostgresLedger(DATABASE_URL)
         await reset_ledger(ledger)
-        await ledger.append(make_evidence())
-        await ledger.append_verdict(make_verdict())
+        await append_evidence_owned(ledger, make_evidence())
+        await append_verdict_owned(ledger, make_verdict())
         with pytest.raises(DBAPIError):
             async with ledger.engine.begin() as connection:
                 await connection.execute(
@@ -136,8 +140,8 @@ def test_verdict_hash_tampering_is_detected_on_read() -> None:
     async def run() -> None:
         ledger = PostgresLedger(DATABASE_URL)
         await reset_ledger(ledger)
-        await ledger.append(make_evidence())
-        await ledger.append_verdict(make_verdict())
+        await append_evidence_owned(ledger, make_evidence())
+        await append_verdict_owned(ledger, make_verdict())
         async with ledger.engine.begin() as connection:
             await connection.execute(text("SET LOCAL session_replication_role = replica"))
             await connection.execute(

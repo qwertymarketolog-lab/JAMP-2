@@ -8,6 +8,7 @@ import os
 from datetime import UTC, datetime
 
 import pytest
+from ledger_fencing import append_evidence_owned
 from sqlalchemy import text
 from sqlalchemy.exc import DBAPIError
 
@@ -56,7 +57,7 @@ def test_postgres_append_get_and_restart_persistence() -> None:
     async def run() -> None:
         ledger = PostgresLedger(DATABASE_URL)
         await reset_ledger(ledger)
-        await ledger.append(make_record("persisted-record"))
+        await append_evidence_owned(ledger, make_record("persisted-record"))
         await ledger.close()
         restarted = PostgresLedger(DATABASE_URL)
         found = await restarted.get("persisted-record")
@@ -73,7 +74,10 @@ def test_concurrent_appends_are_serialized_into_one_valid_chain() -> None:
         ledger = PostgresLedger(DATABASE_URL)
         await reset_ledger(ledger)
         stored = await asyncio.gather(
-            *(ledger.append(make_record(f"parallel-{index}")) for index in range(10))
+            *(
+                append_evidence_owned(ledger, make_record(f"parallel-{index}"))
+                for index in range(10)
+            )
         )
         assert len(stored) == 10
         assert await ledger.verify_chain()
@@ -85,7 +89,7 @@ def test_direct_sql_tampering_is_detected_on_read() -> None:
     async def run() -> None:
         ledger = PostgresLedger(DATABASE_URL)
         await reset_ledger(ledger)
-        await ledger.append(make_record("tamper-me"))
+        await append_evidence_owned(ledger, make_record("tamper-me"))
         async with ledger.engine.begin() as connection:
             await connection.execute(text("SET LOCAL session_replication_role = replica"))
             await connection.execute(
@@ -102,7 +106,7 @@ def test_database_trigger_rejects_update() -> None:
     async def run() -> None:
         ledger = PostgresLedger(DATABASE_URL)
         await reset_ledger(ledger)
-        await ledger.append(make_record("immutable-update"))
+        await append_evidence_owned(ledger, make_record("immutable-update"))
         with pytest.raises(DBAPIError):
             async with ledger.engine.begin() as connection:
                 await connection.execute(
@@ -119,7 +123,7 @@ def test_database_trigger_rejects_delete_and_preserves_record() -> None:
     async def run() -> None:
         ledger = PostgresLedger(DATABASE_URL)
         await reset_ledger(ledger)
-        await ledger.append(make_record("immutable-delete"))
+        await append_evidence_owned(ledger, make_record("immutable-delete"))
         with pytest.raises(DBAPIError):
             async with ledger.engine.begin() as connection:
                 await connection.execute(
