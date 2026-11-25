@@ -125,17 +125,36 @@ async def _fetch_one(
             status, details, raw_evidence = result.status, result.details, result.raw_evidence
             if not raw_evidence:
                 status = "EVIDENCE_NOT_CAPTURED"
-                details = {"reason": "SOURCE_EVIDENCE_NOT_CAPTURED"}
+                details = {
+                    **details,
+                    "provider_status": result.status,
+                    "capture_status": status,
+                    "capture_reason": "SOURCE_EVIDENCE_NOT_CAPTURED",
+                }
             elif any(item.get("body_complete") is not True for item in raw_evidence):
                 status = "INCOMPLETE_EVIDENCE"
-                details = {"reason": "SOURCE_BODY_INCOMPLETE"}
-        except TimeoutError:
+                details = {
+                    **details,
+                    "provider_status": result.status,
+                    "capture_status": status,
+                    "capture_reason": "SOURCE_BODY_INCOMPLETE",
+                }
+        except TimeoutError as exc:
             status = "TIMEOUT"
-            details = {"reason": "PROVIDER_TIMEOUT"}
+            details = {
+                "reason": "PROVIDER_TIMEOUT",
+                "error_type": type(exc).__name__,
+                "phase": "provider.verify_claim",
+            }
             raw_evidence = []
         except Exception as exc:
             status = "PROVIDER_ERROR"
-            details = {"reason": "PROVIDER_EXCEPTION", "error_type": type(exc).__name__}
+            details = {
+                "reason": "PROVIDER_EXCEPTION",
+                "error_type": type(exc).__name__,
+                "error_message": str(exc)[:500],
+                "phase": "provider.verify_claim",
+            }
             raw_evidence = []
 
     value = _numeric_value(details)
