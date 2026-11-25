@@ -9,6 +9,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import json
+import logging
 import math
 import re
 import urllib.error
@@ -27,6 +28,8 @@ E4_CONTRADICTED = "E4_CONTRADICTED"
 E4_OUT_OF_SCOPE = "E4_OUT_OF_SCOPE"
 E4_INCONCLUSIVE = "E4_INCONCLUSIVE"
 PRICE_FIELDS = ["LAST", "MARKETPRICE", "MARKETPRICE2"]
+
+logger = logging.getLogger(__name__)
 
 
 def _moex_capture_metadata(payload: dict[str, Any]) -> dict[str, Any]:
@@ -93,6 +96,7 @@ def _moex_capture_metadata(payload: dict[str, Any]) -> dict[str, Any]:
 def _get_json(
     url: str,
     timeout: float,
+    phase: str,
     raw_evidence: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     request = urllib.request.Request(
@@ -103,6 +107,12 @@ def _get_json(
         with urllib.request.urlopen(request, timeout=timeout) as response:
             body = response.read()
             status_code = getattr(response, "status", 200)
+    except TimeoutError:
+        logger.error(
+            "MOEX timeout: url=%s, timeout=%.1fs, phase=%s",
+            url, timeout, phase,
+        )
+        raise
     except urllib.error.HTTPError as exc:
         body = exc.read()
         if raw_evidence is not None:
@@ -256,7 +266,12 @@ def _verify_claim_with_moex(
     )
     securities_columns: list[str] | None = None
     try:
-        catalog = _get_json(f"{MOEX_ISS_BASE}/securities.json?{query}", timeout, raw_evidence)
+        catalog = _get_json(
+            f"{MOEX_ISS_BASE}/securities.json?{query}",
+            timeout,
+            phase="securities",
+            raw_evidence=raw_evidence,
+        )
         securities_table = catalog.get("securities")
         if isinstance(securities_table, dict) and isinstance(securities_table.get("columns"), list):
             securities_columns = [
@@ -321,7 +336,12 @@ def _verify_claim_with_moex(
     marketdata_columns: list[str] | None = None
     marketdata_rows_count: int | None = None
     try:
-        market = _get_json(price_url, timeout, raw_evidence)
+        market = _get_json(
+            price_url,
+            timeout,
+            phase="marketdata",
+            raw_evidence=raw_evidence,
+        )
         marketdata_table = market.get("marketdata")
         if isinstance(marketdata_table, dict) and isinstance(marketdata_table.get("columns"), list):
             marketdata_columns = [
