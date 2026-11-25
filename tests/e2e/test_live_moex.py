@@ -59,6 +59,8 @@ def test_live_moex_capture_is_inconclusive_without_calendar(
             f"Expected API 201 after MOEX request; got {response.status_code}: {response.text}"
         )
         result = response.json()
+        artifact["reason_codes"] = result.get("arbitration", {}).get("reason_codes", [])
+        artifact["provider_status"] = result.get("provider_status")
         assert result.get("verdict") == "INCONCLUSIVE", (
             "MOEX without a confirmed calendar/upstream timestamp must remain INCONCLUSIVE; "
             f"received {result.get('verdict')}"
