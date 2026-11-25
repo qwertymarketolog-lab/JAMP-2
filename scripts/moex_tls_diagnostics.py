@@ -250,7 +250,11 @@ def collect_official_ca_audit(
         None,
     )
     intermediate = next(
-        (item for item in peer_chain if "RUSSIAN TRUSTED SUB CA" in item.get("subject", "").upper()),
+        (
+            item
+            for item in peer_chain
+            if "RUSSIAN TRUSTED SUB CA" in item.get("subject", "").upper()
+        ),
         None,
     )
     if root_ok and sub_ok and leaf and intermediate:
