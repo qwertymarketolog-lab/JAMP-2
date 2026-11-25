@@ -15,6 +15,8 @@ import re
 import shutil
 import ssl
 import subprocess
+import tempfile
+import urllib.request
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -106,6 +108,172 @@ def _certificate_metadata(
     }
 
 
+
+def _pem_certificates(data: bytes) -> list[bytes]:
+    """Return PEM blocks from PEM or DER certificate input."""
+    matches = _CERTIFICATE_RE.findall(data)
+    if matches:
+        return matches
+    return [ssl.DER_cert_to_PEM_cert(data).encode("ascii")]
+
+
+def _openssl_fingerprint(
+    pem: bytes, *, openssl: str, runner: Any
+) -> str | None:
+    result = runner(
+        [openssl, "x509", "-noout", "-fingerprint", "-sha256"],
+        input=pem,
+        capture_output=True,
+        check=False,
+    )
+    if result.returncode != 0:
+        return None
+    output = (result.stdout + result.stderr).decode("utf-8", errors="replace")
+    match = re.search(r"Fingerprint=([0-9A-Fa-f:]+)", output)
+    return match.group(1).replace(":", "").upper() if match else None
+
+
+def _scan_trust_store(
+    *, openssl: str, runner: Any, cafile: str | None, capath: str | None
+) -> dict[str, Any]:
+    """Scan the configured bundle and hashed CA directory by certificate fingerprint."""
+    fingerprints: set[str] = set()
+    scanned_files = 0
+    unreadable_files = 0
+    candidates: list[Path] = []
+    if cafile and Path(cafile).is_file():
+        candidates.append(Path(cafile))
+    if capath and Path(capath).is_dir():
+        candidates.extend(path for path in Path(capath).iterdir() if path.is_file())
+
+    for path in candidates:
+        try:
+            data = path.read_bytes()
+            certs = _pem_certificates(data)
+        except (OSError, ValueError, ssl.SSLError):
+            unreadable_files += 1
+            continue
+        scanned_files += 1
+        for pem in certs:
+            fingerprint = _openssl_fingerprint(pem, openssl=openssl, runner=runner)
+            if fingerprint:
+                fingerprints.add(fingerprint)
+    return {
+        "scanned_files": scanned_files,
+        "unreadable_files": unreadable_files,
+        "unique_certificate_fingerprints": len(fingerprints),
+        "root_sha256_present": _OFFICIAL_CA["root"]["sha256"] in fingerprints,
+        "root_sha256": _OFFICIAL_CA["root"]["sha256"],
+    }
+
+
+def collect_official_ca_audit(
+    peer_chain: list[dict[str, Any]],
+    host: str,
+    *,
+    runner: Any = subprocess.run,
+    openssl: str | None = None,
+    downloader: Any = urllib.request.urlopen,
+) -> dict[str, Any]:
+    """Download AIA-published CA files, pin their DER hashes, and audit runner trust."""
+    openssl = openssl or shutil.which("openssl")
+    report: dict[str, Any] = {
+        "sources": "AIA URIs embedded in the observed MOEX peer certificate chain",
+        "certificates": {},
+        "trust_store_membership": None,
+        "chain_verification": None,
+    }
+    if openssl is None:
+        report["error"] = "openssl executable not found"
+        return report
+
+    downloaded_pem: dict[str, bytes] = {}
+    for name, spec in _OFFICIAL_CA.items():
+        entry: dict[str, Any] = {
+            "url": spec["url"],
+            "expected_sha256_der": spec["sha256"],
+            "downloaded": False,
+            "fingerprint_match": False,
+        }
+        try:
+            with downloader(spec["url"], timeout=20) as response:
+                raw = response.read(1_048_577)
+            if len(raw) > 1_048_576:
+                raise ValueError("certificate download exceeded 1 MiB")
+            pem = _pem_certificates(raw)[0]
+            der = ssl.PEM_cert_to_DER_cert(pem.decode("ascii"))
+            actual = hashlib.sha256(der).hexdigest().upper()
+            openssl_fingerprint = _openssl_fingerprint(
+                pem, openssl=openssl, runner=runner
+            )
+            entry.update(
+                {
+                    "downloaded": True,
+                    "sha256_der": actual,
+                    "openssl_sha256_fingerprint": openssl_fingerprint,
+                    "fingerprint_match": (
+                        actual == spec["sha256"]
+                        and openssl_fingerprint == spec["sha256"]
+                    ),
+                    "pem": pem.decode("ascii"),
+                }
+            )
+            downloaded_pem[name] = pem
+        except Exception as exc:  # diagnostics must retain per-source failures
+            entry["error"] = f"{type(exc).__name__}: {exc}"
+        report["certificates"][name] = entry
+
+    paths = ssl.get_default_verify_paths()
+    if "root" in downloaded_pem:
+        report["trust_store_membership"] = _scan_trust_store(
+            openssl=openssl,
+            runner=runner,
+            cafile=paths.cafile,
+            capath=paths.capath,
+        )
+
+    root_ok = report["certificates"].get("root", {}).get("fingerprint_match")
+    sub_ok = report["certificates"].get("sub", {}).get("fingerprint_match")
+    leaf = next(
+        (item for item in peer_chain if "MOEX" in item.get("subject", "").upper()
+         or "*.MOEX.COM" in item.get("subject", "").upper()),
+        None,
+    )
+    intermediate = next(
+        (item for item in peer_chain if "RUSSIAN TRUSTED SUB CA" in item.get("subject", "").upper()),
+        None,
+    )
+    if root_ok and sub_ok and leaf and intermediate:
+        with tempfile.TemporaryDirectory(prefix="jamp2-moex-ca-audit-") as temp:
+            root_path = Path(temp) / "root.pem"
+            sub_path = Path(temp) / "sub.pem"
+            leaf_path = Path(temp) / "leaf.pem"
+            root_path.write_bytes(downloaded_pem["root"])
+            sub_path.write_text(intermediate["pem"], encoding="ascii")
+            leaf_path.write_text(leaf["pem"], encoding="ascii")
+            verify = runner(
+                [
+                    openssl, "verify", "-verbose", "-CAfile", str(root_path),
+                    "-untrusted", str(sub_path), "-verify_hostname", host,
+                    str(leaf_path),
+                ],
+                capture_output=True,
+                check=False,
+            )
+            report["chain_verification"] = {
+                "exit_code": verify.returncode,
+                "stdout": verify.stdout.decode("utf-8", errors="replace"),
+                "stderr": verify.stderr.decode("utf-8", errors="replace"),
+                "trust_store_modified": False,
+            }
+    else:
+        report["chain_verification"] = {
+            "status": "NOT_RUN",
+            "reason": "Official root/sub fingerprints or peer leaf/intermediate unavailable",
+            "trust_store_modified": False,
+        }
+    return report
+
 def collect_tls_diagnostics(
     host: str,
     *,
@@ -182,6 +350,9 @@ def collect_tls_diagnostics(
         for pem in certificates
     ]
     report["certificate_count"] = len(certificates)
+    report["official_ca_audit"] = collect_official_ca_audit(
+        report["certificate_chain"], host, runner=runner, openssl=openssl
+    )
     return report
 
 
