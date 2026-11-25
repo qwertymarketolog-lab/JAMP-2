@@ -42,7 +42,8 @@ def test_live_coingecko_bitcoin_persists_and_replays(
         "captured_at_utc": datetime.now(UTC).isoformat(),
         "scope_note": (
             "Baseline replay only. This artifact does not claim ADR-0009 Replay v1 "
-            "conformance, historical freshness, policy snapshot binding, or wall-clock independence."
+            "conformance, historical freshness, policy snapshot binding, or "
+            "wall-clock independence."
         ),
         "test_status": "RUNNING",
     }
@@ -104,7 +105,9 @@ def test_live_coingecko_bitcoin_persists_and_replays(
                 assert row["provider_adapter_version"] == "coingecko-adapter-v1"
 
                 parsed = row["parsed_value"]
-                provider_result = parsed.get("provider_result", {}) if isinstance(parsed, dict) else {}
+                provider_result = (
+                    parsed.get("provider_result", {}) if isinstance(parsed, dict) else {}
+                )
                 evidence_artifacts.append(
                     {
                         "evidence_id": evidence_id,
