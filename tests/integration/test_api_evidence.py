@@ -426,6 +426,7 @@ def test_api_multi_source_conflict_is_persisted_and_replayed_from_postgres() -> 
         )
         payload = claim_payload()
         payload["unit"] = "USD"
+        payload["expected_value"] = 100.0
         payload["text"] = "SBER spot price is disputed at 100.00 or 105.00 USD"
         headers = {
             "X-API-Key": "integration-test-key",
@@ -487,7 +488,7 @@ def test_api_multi_source_conflict_is_persisted_and_replayed_from_postgres() -> 
             replay = await client.post(f"/v1/verdicts/{body['verdict_id']}/replay")
             assert replay.status_code == 200
             replay_body = replay.json()
-            assert replay_body["replay_status"] == "AMBIGUOUS", replay_body
+            assert replay_body["replay_status"] == "AMBIGUOUS", replay_body.get("reason_code")
             assert replay_body["matches_original"] is True
             assert replay_body["reason_codes_match"] is True
             assert replay_body["reason_code"] == "POLICY_GATE_AND_REDUCER_REPLAYED"
