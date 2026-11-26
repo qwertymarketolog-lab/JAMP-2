@@ -5,7 +5,6 @@ import base64
 import hashlib
 import hmac
 import secrets
-import uuid
 from pathlib import Path
 from typing import Annotated, Any
 
@@ -169,7 +168,8 @@ def build_dashboard_router(
             ))
         upstream = await call_internal_api(
             request, "POST", "/v1/claims/verify",
-            body=payload.model_dump(mode="json"), idempotency_key=str(uuid.uuid4()),
+            body=payload.model_dump(mode="json"),
+            idempotency_key=request.headers.get("idempotency-key"),
         )
         try:
             result = upstream.json()
