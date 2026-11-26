@@ -146,8 +146,15 @@ class ApiMemoryLedger(DashboardLedger):
     async def begin_idempotency(
         self, *, key_hash: str, request_digest: str, claim_id: str
     ) -> tuple[str, str | None, dict[str, Any] | None]:
-        if key_hash in self.idempotency:
-            return "IN_PROGRESS", None, None
+        existing = self.idempotency.get(key_hash)
+        if existing is not None:
+            if existing["request_digest"] != request_digest:
+                return "KEY_REUSED", None, None
+            if existing["status"] == "COMPLETED":
+                return "COMPLETED", None, existing["response_payload"]
+            if existing["status"] == "PENDING":
+                return "IN_PROGRESS", None, None
+            return "FAILED", None, None
         owner = uuid.uuid4().hex
         self.idempotency[key_hash] = {
             "request_digest": request_digest, "claim_id": claim_id,
@@ -248,11 +255,12 @@ class DashboardStubProvider:
 def test_dashboard_claim_and_replay_use_server_side_api_key() -> None:
     async def run() -> None:
         ledger = ApiMemoryLedger()
+        provider = DashboardStubProvider()
         app = create_app(
             ledger,
             api_key="never-send-this-to-browser",
             dashboard_password="dashboard-test-password",
-            providers={"moex": DashboardStubProvider()},
+            providers={"moex": provider},
             code_version="dashboard-test-sha",
         )
         payload = {
@@ -293,7 +301,7 @@ def test_dashboard_claim_and_replay_use_server_side_api_key() -> None:
             assert ledger.idempotency and len(ledger.records) == 2
             assert len(ledger.verdicts) == 1
             assert len(ledger.idempotency) == 1
-            assert app.state  # app remains available for subsequent page and replay checks
+            assert provider.calls == 1
             verdict_page = await client.get(f"/verdicts/{verdict_id}")
             replay = await client.post(
                 f"/verdicts/{verdict_id}/replay",
