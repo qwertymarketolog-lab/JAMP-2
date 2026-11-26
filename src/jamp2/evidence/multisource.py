@@ -233,6 +233,8 @@ def build_policy_snapshot(
         "required_fields": [
             "raw_body_bytes", "raw_sha256", "body_complete", "fetched_at",
             "provider_observed_at", "provider_adapter_version", "parser_version",
+            "source_status", "provider_result", "source_identifiers", "quote_currency",
+            "price_type", "market_calendar_qualification",
         ],
         "comparison_parameters": {
             "moex.iss": {"mode": "RELATIVE_DELTA", "threshold": 0.05},

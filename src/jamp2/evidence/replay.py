@@ -189,8 +189,11 @@ def _historical_validity_reason(
     if not isinstance(source_policy, dict) or not isinstance(required_sources, list):
         return "POLICY_SNAPSHOT_INVALID"
     policy_source_ids = source_policy.get("required_sources")
-    if not isinstance(policy_source_ids, list) or any(
-        not isinstance(item, str) for item in policy_source_ids
+    if (
+        not isinstance(policy_source_ids, list)
+        or not policy_source_ids
+        or any(not isinstance(item, str) or not item for item in policy_source_ids)
+        or len(set(policy_source_ids)) != len(policy_source_ids)
     ):
         return "POLICY_SNAPSHOT_INVALID"
     snapshot_source_ids = [
@@ -198,6 +201,8 @@ def _historical_validity_reason(
     ]
     if (
         len(snapshot_source_ids) != len(required_sources)
+        or any(not isinstance(item, str) or not item for item in snapshot_source_ids)
+        or len(set(snapshot_source_ids)) != len(snapshot_source_ids)
         or set(snapshot_source_ids) != set(policy_source_ids)
     ):
         return "POLICY_SNAPSHOT_INVALID"
@@ -386,6 +391,12 @@ def _replay_multi_source_conflict(
             expected_value=claim_snapshot["expected_value"],
             unit=claim_snapshot["unit"],
         )
+        if (
+            source_policy.asset_class != claim.subject_kind
+            or claim.subject_identifier not in source_policy.required_identifiers
+            or claim.unit != source_policy.quote_currency
+        ):
+            raise ValueError("claim identity differs from the bound source policy")
 
         outcomes: list[SourceOutcome] = []
         for source in source_specs:
@@ -412,7 +423,9 @@ def _replay_multi_source_conflict(
                 or source.provider_id not in qualifications
                 or qualifications[source.provider_id] != details.get("market_calendar_valid")
             ):
-                raise ValueError("market calendar qualification differs from persisted source result")
+                raise ValueError(
+                    "market calendar qualification differs from persisted source result"
+                )
             if not isinstance(source_status, str):
                 raise ValueError("source status is missing")
             derived = _parse_raw_source_value(
@@ -551,6 +564,8 @@ def replay_verdict(
     if verdict.policy_snapshot.get("required_fields") != [
         "raw_body_bytes", "raw_sha256", "body_complete", "fetched_at",
         "provider_observed_at", "provider_adapter_version", "parser_version",
+        "source_status", "provider_result", "source_identifiers", "quote_currency",
+        "price_type", "market_calendar_qualification",
     ]:
         return _inconclusive("POLICY_SNAPSHOT_REQUIRED_FIELDS_UNSUPPORTED", verdict)
     if verdict.policy_id != POLICY_ID or verdict.policy_version != POLICY_VERSION:

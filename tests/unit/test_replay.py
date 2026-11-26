@@ -141,6 +141,8 @@ def multi_source_policy_snapshot() -> dict[str, Any]:
         "required_fields": [
             "raw_body_bytes", "raw_sha256", "body_complete", "fetched_at",
             "provider_observed_at", "provider_adapter_version", "parser_version",
+            "source_status", "provider_result", "source_identifiers", "quote_currency",
+            "price_type", "market_calendar_qualification",
         ],
         "comparison_parameters": {
             "test-adapter-v1": {"mode": "RELATIVE_DELTA", "threshold": 0.05},
@@ -709,3 +711,15 @@ def test_replay_rejects_calendar_state_conflicting_with_source_result() -> None:
     assert result["replay_status"] == "INCONCLUSIVE"
     assert result["reason_code"] == "POLICY_REPLAY_CONTEXT_INVALID"
 
+
+
+def test_replay_rejects_required_source_id_snapshot_mismatch() -> None:
+    snapshot = multi_source_policy_snapshot()
+    policy = dict(snapshot["policy"])
+    source_policy = dict(policy["source_policy"])
+    source_policy["required_sources"] = ["source-a", "source-c"]
+    policy["source_policy"] = source_policy
+    snapshot["policy"] = policy
+    result = replay_verdict(multi_source_verdict(snapshot), multi_source_records())
+    assert result["replay_status"] == "INCONCLUSIVE"
+    assert result["reason_code"] == "POLICY_SNAPSHOT_INVALID"
