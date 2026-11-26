@@ -308,7 +308,9 @@ def _replay_multi_source_conflict(
             )
 
         arbitration = arbitrate_from_evidence(
-            claim, policy, tuple(outcomes), records, now=evaluation_time
+            claim, policy, tuple(outcomes), records,
+            expected_claim_id=verdict.claim_id,
+            now=evaluation_time
         )
     except (IntegrityViolation, KeyError, TypeError, ValueError, OverflowError):
         return "INCONCLUSIVE", "POLICY_REPLAY_CONTEXT_INVALID", {}
