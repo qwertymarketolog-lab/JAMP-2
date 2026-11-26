@@ -201,7 +201,11 @@ class ApiMemoryLedger(DashboardLedger):
 
 
 class DashboardStubProvider:
+    def __init__(self) -> None:
+        self.calls = 0
+
     def verify_claim(self, claim: NormalizedClaim) -> ProviderResult:
+        self.calls += 1
         assert claim.subject_identifier == "SBER"
         raw_market = b'{"marketdata":{"columns":["SECID","LAST"],"data":[["SBER",300]]}}'
         raw_catalog = b'{"securities":{"columns":["secid"],"data":[["SBER"]]}}'
@@ -269,11 +273,27 @@ def test_dashboard_claim_and_replay_use_server_side_api_key() -> None:
                 headers={
                     "Origin": "http://test",
                     "X-JAMP-Dashboard-Request": "1",
+                    "Idempotency-Key": "dashboard-claim-retry-001",
                 },
             )
             assert created.status_code == 201
             assert "never-send-this-to-browser" not in created.text
             verdict_id = created.json()["redirect_url"].rsplit("/", 1)[1]
+            retried = await client.post(
+                "/claims/verify",
+                json=payload,
+                headers={
+                    "Origin": "http://test",
+                    "X-JAMP-Dashboard-Request": "1",
+                    "Idempotency-Key": "dashboard-claim-retry-001",
+                },
+            )
+            assert retried.status_code == 201
+            assert retried.json()["redirect_url"] == f"/verdicts/{verdict_id}"
+            assert ledger.idempotency and len(ledger.records) == 2
+            assert len(ledger.verdicts) == 1
+            assert len(ledger.idempotency) == 1
+            assert app.state  # app remains available for subsequent page and replay checks
             verdict_page = await client.get(f"/verdicts/{verdict_id}")
             replay = await client.post(
                 f"/verdicts/{verdict_id}/replay",
@@ -287,6 +307,7 @@ def test_dashboard_claim_and_replay_use_server_side_api_key() -> None:
         assert replay.json()["replay_status"] == "VERIFIED"
         assert replay.json()["matches_original"] is True
         assert replay.json()["network_calls"] == 0
+        assert len(ledger.verdicts) == 1
 
     asyncio.run(run())
 
