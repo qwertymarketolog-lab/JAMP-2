@@ -503,6 +503,13 @@ def test_api_multi_source_conflict_is_persisted_and_replayed_from_postgres() -> 
             assert replay_body["network_calls"] == 0
             assert source_a.calls == 1
             assert source_b.calls == 1
+            records_after_replay = await ledger.list_by_claim(body["claim_id"])
+            assert {
+                record.evidence_id: record.record_hash for record in records_after_replay
+            } == {row["evidence_id"]: row["record_hash"] for row in evidence_rows}
+            verdict_after_replay = await ledger.get_verdict(body["verdict_id"])
+            assert verdict_after_replay is not None
+            assert verdict_after_replay.record_hash == verdict_row["record_hash"]
 
             duplicate = await client.post("/v1/claims/verify", json=payload)
             assert duplicate.status_code == 201

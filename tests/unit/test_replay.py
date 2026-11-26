@@ -7,6 +7,7 @@ from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
+import jamp2.evidence.replay as replay_module
 from jamp2.domain.claim import NormalizedClaim
 from jamp2.evidence.digest import (
     compute_policy_snapshot_sha256,
@@ -20,7 +21,6 @@ from jamp2.evidence.multisource import (
     build_policy_replay_context,
 )
 from jamp2.evidence.policy import SourcePolicyRecord, SourceProvenance
-import jamp2.evidence.replay as replay_module
 from jamp2.evidence.replay import replay_verdict
 from jamp2.evidence.verdict import VerdictRecord
 
