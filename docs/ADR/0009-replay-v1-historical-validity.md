@@ -1,6 +1,6 @@
 # ADR-0009: Replay v1 historical validity and policy binding
 
-- Status: Accepted (contract); implementation pending
+- Status: Accepted; implementation verified on branch (not merged)
 - Scope: JAMP 2 deterministic, no-network replay of persisted verdicts
 - Decision date: 2026-11-25
 - Depends on: ADR-0007 (source metadata and evidence hash schema), ADR-0008 (evidence-first arbitration pipeline)
@@ -177,15 +177,16 @@ produce a conclusive replay merely because older tests expected it.
 
 ## Compatibility and migration constraints
 
-- This ADR changes the contract only. It does not authorize runtime-code,
-  database-schema, migration, ledger, or existing verdict mutation.
+- This ADR defines the contract. Runtime implementation and migration 009 were
+  separately authorized on 2026-11-26. No historical verdict or evidence rows
+  were backfilled or mutated.
 - Existing historical verdicts without a verifiable policy snapshot cannot be
   upgraded retroactively by guessing their original parameters. Unless an
   independently verifiable historical policy artifact exists, their Replay
   result remains `INCONCLUSIVE`.
-- Existing tests and fixtures must be brought into conformance with this
-  contract in a later implementation change. Tests MUST NOT be weakened or
-  removed to preserve obsolete conclusive outcomes.
+- Existing tests and fixtures were brought into conformance in the implementation
+  change. Tests were expanded; no tests, thresholds, or quality checks were weakened
+  or removed to preserve obsolete conclusive outcomes.
 - No comparison threshold may be changed as part of implementing Replay v1.
   Thresholds must be sourced from the immutable policy snapshot.
 - Any required schema or ledger change must be proposed separately with
@@ -203,5 +204,21 @@ Replay v1 implementation is not complete until:
 5. Replay performs no network access and does not mutate persisted records.
 6. CI provides terminal evidence for the exact implementation commit.
 
-Until these criteria are met, this ADR is an accepted target contract, not a
-claim of runtime conformance.
+## Implementation record — 2026-11-26
+
+- State: **VERIFIED on the working branch; not merged to main**.
+- Branch: `test/j2-002-multisource-conflict`.
+- Implementation commit: `201cb70c72a473b7fcc99f964a2e5810b2de0f16`.
+- CI workflow: `JAMP 2 CI`.
+- Run: `45770195876` — terminal `success`.
+- Job: `139740721751` — terminal `success`.
+- Test artifact: `15094140307` (`jamp2-pytest-45770195876`).
+- Result: `199 passed, 2 skipped, 21 warnings`.
+- The two skipped tests are live-provider checks gated by `JAMP_RUN_LIVE=1`;
+  this record does not claim live-provider validation.
+- Main remained at `c0561f82c3cb995a8d72bf343d121142a5afd13f`; no PR was
+  created for this implementation branch.
+
+The terminal CI evidence above verifies the implementation commit. This record
+updates the ADR's implementation status; it does not authorize a merge or
+change the historical verdicts that lack a verifiable policy snapshot.
