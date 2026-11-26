@@ -31,6 +31,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 from jamp2.evidence.digest import (
+    compute_policy_snapshot_sha256,
     compute_record_hash,
     compute_sha256,
     compute_verdict_hash,
@@ -168,6 +169,8 @@ def _to_record(row: EvidenceRow) -> EvidenceRecord:
 
 
 def _to_verdict(row: VerdictRow) -> VerdictRecord:
+    if row.policy_snapshot is not None and not isinstance(row.policy_snapshot, dict):
+        raise IntegrityViolation("persisted policy_snapshot must be a JSON object")
     return VerdictRecord(
         verdict_id=row.verdict_id,
         claim_id=row.claim_id,
@@ -182,7 +185,9 @@ def _to_verdict(row: VerdictRow) -> VerdictRecord:
         explanation=row.explanation,
         parent_hash=row.parent_hash,
         verification_mode=row.verification_mode,
-        policy_snapshot=row.policy_snapshot,
+        policy_snapshot=(
+            row.policy_snapshot if isinstance(row.policy_snapshot, dict) else None
+        ),
         policy_snapshot_sha256=row.policy_snapshot_sha256,
     )
 
@@ -355,6 +360,10 @@ class PostgresLedger:
                 if any(row.verdict_id == record.verdict_id for row in rows):
                     raise DuplicateVerdict(record.verdict_id)
                 parent_hash = rows[-1].record_hash if rows else None
+                if record.policy_snapshot is not None and compute_policy_snapshot_sha256(
+                    record.policy_snapshot
+                ) != record.policy_snapshot_sha256:
+                    raise IntegrityViolation("policy snapshot digest does not match its content")
                 linked_record = replace(record, parent_hash=parent_hash)
                 record_hash = compute_verdict_hash(linked_record)
                 await connection.execute(
@@ -637,6 +646,12 @@ class PostgresLedger:
                 raise IntegrityViolation("duplicate verdict_id in persisted ledger")
             if record.parent_hash != expected_parent:
                 raise IntegrityViolation(f"verdict parent hash mismatch: {record.verdict_id}")
+            if record.policy_snapshot is not None and compute_policy_snapshot_sha256(
+                record.policy_snapshot
+            ) != record.policy_snapshot_sha256:
+                raise IntegrityViolation(
+                    f"policy snapshot digest mismatch: {record.verdict_id}"
+                )
             actual_hash = compute_verdict_hash(record)
             if actual_hash != row.record_hash:
                 raise IntegrityViolation(f"verdict record hash mismatch: {record.verdict_id}")

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import base64
 import hashlib
+from typing import cast
 
 from jamp2.evidence.canonicalize import canonicalize
 from jamp2.evidence.model import EvidenceRecord, IntegrityViolation, JSONValue
@@ -55,7 +56,7 @@ def compute_policy_snapshot_sha256(snapshot: JSONValue) -> str:
 
 def compute_verdict_hash(record: VerdictRecord) -> str:
     """Hash every immutable verdict field and its preceding verdict-chain hash."""
-    payload: JSONValue = {
+    payload: dict[str, JSONValue] = {
         "verdict_id": record.verdict_id,
         "claim_id": record.claim_id,
         "status": record.status,
@@ -71,6 +72,6 @@ def compute_verdict_hash(record: VerdictRecord) -> str:
     }
     if record.policy_snapshot is not None:
         payload["verification_mode"] = record.verification_mode
-        payload["policy_snapshot"] = record.policy_snapshot
+        payload["policy_snapshot"] = cast(JSONValue, record.policy_snapshot)
         payload["policy_snapshot_sha256"] = record.policy_snapshot_sha256
     return compute_sha256(canonicalize(payload))

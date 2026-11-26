@@ -73,7 +73,8 @@ class VerdictRecord:
         if self.policy_snapshot is not None and not isinstance(self.policy_snapshot, dict):
             raise ValueError("policy_snapshot must be an object or null")
         if self.policy_snapshot_sha256 is not None and (
-            len(self.policy_snapshot_sha256) != 64
+            not isinstance(self.policy_snapshot_sha256, str)
+            or len(self.policy_snapshot_sha256) != 64
             or any(c not in "0123456789abcdef" for c in self.policy_snapshot_sha256)
         ):
             raise ValueError("policy_snapshot_sha256 must be a lowercase SHA-256 digest")
