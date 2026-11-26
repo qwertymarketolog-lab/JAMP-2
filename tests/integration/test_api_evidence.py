@@ -509,7 +509,12 @@ def test_api_multi_source_conflict_is_persisted_and_replayed_from_postgres() -> 
             } == {row["evidence_id"]: row["record_hash"] for row in evidence_rows}
             verdict_after_replay = await ledger.get_verdict(body["verdict_id"])
             assert verdict_after_replay is not None
-            assert compute_verdict_hash(verdict_after_replay) == verdict_row["record_hash"]
+            async with ledger.engine.connect() as connection:
+                persisted_verdict_hash = await connection.scalar(
+                    text("SELECT record_hash FROM verdicts WHERE verdict_id = :verdict_id"),
+                    {"verdict_id": body["verdict_id"]},
+                )
+            assert compute_verdict_hash(verdict_after_replay) == persisted_verdict_hash
 
             duplicate = await client.post("/v1/claims/verify", json=payload)
             assert duplicate.status_code == 201

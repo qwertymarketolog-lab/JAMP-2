@@ -97,85 +97,6 @@ def _finite_positive(value: object) -> float | None:
     return number if math.isfinite(number) and number > 0 else None
 
 
-def _replay_moex(
-    verdict: VerdictRecord,
-    records: Sequence[EvidenceRecord],
-    claim: dict[str, Any],
-) -> tuple[str, str, float | None]:
-    ticker = claim.get("subject_identifier")
-    expected = _finite_positive(claim.get("expected_value"))
-    if not isinstance(ticker, str) or expected is None or claim.get("unit") != "RUB":
-        return "INCONCLUSIVE", "CLAIM_SNAPSHOT_INVALID", None
-
-    catalog_seen = False
-    security_found = False
-    observed_price: float | None = None
-    for record in records:
-        if record.http_status != 200:
-            continue
-        try:
-            payload = json.loads(record.raw_body_bytes.decode("utf-8"))
-        except (UnicodeDecodeError, json.JSONDecodeError):
-            return "INCONCLUSIVE", "RAW_PROVIDER_JSON_INVALID", None
-        if not isinstance(payload, dict):
-            return "INCONCLUSIVE", "RAW_PROVIDER_JSON_INVALID", None
-        securities = _table_rows(payload, "securities")
-        if securities is not None:
-            catalog_seen = True
-            security_found = any(
-                isinstance(row.get("secid"), str)
-                and row["secid"].upper() == ticker.upper()
-                for row in securities
-            )
-        marketdata = _table_rows(payload, "marketdata")
-        if marketdata is not None:
-            for row in marketdata:
-                if (
-                    isinstance(row.get("SECID"), str)
-                    and row["SECID"].upper() == ticker.upper()
-                ):
-                    observed_price = _finite_positive(row.get("LAST"))
-                    if observed_price is not None:
-                        break
-    if catalog_seen and not security_found:
-        return "OUT_OF_SCOPE", "MOEX_SECURITY_NOT_IN_CATALOG", None
-    if not catalog_seen or not security_found or observed_price is None:
-        return "INCONCLUSIVE", "MOEX_PRICE_OBSERVATION_INCOMPLETE", observed_price
-    relative_delta = abs(expected - observed_price) / observed_price
-    status = "CONTRADICTED" if relative_delta > 0.05 else "VERIFIED"
-    return status, "MOEX_PRICE_POLICY_V1", observed_price
-
-
-def _replay_coingecko(
-    records: Sequence[EvidenceRecord],
-    claim: dict[str, Any],
-) -> tuple[str, str, float | None]:
-    coin_id = claim.get("subject_identifier")
-    expected = _finite_positive(claim.get("expected_value"))
-    if not isinstance(coin_id, str) or expected is None or claim.get("unit") != "USD":
-        return "INCONCLUSIVE", "CLAIM_SNAPSHOT_INVALID", None
-    if any(record.http_status == 404 for record in records):
-        return "OUT_OF_SCOPE", "COINGECKO_COIN_NOT_FOUND", None
-    if any(record.http_status != 200 for record in records):
-        return "INCONCLUSIVE", "COINGECKO_SOURCE_UNAVAILABLE", None
-    for record in records:
-        try:
-            payload = json.loads(record.raw_body_bytes.decode("utf-8"))
-        except (UnicodeDecodeError, json.JSONDecodeError):
-            return "INCONCLUSIVE", "RAW_PROVIDER_JSON_INVALID", None
-        if not isinstance(payload, dict):
-            return "INCONCLUSIVE", "RAW_PROVIDER_JSON_INVALID", None
-        coin = payload.get(coin_id)
-        if isinstance(coin, dict):
-            observed = _finite_positive(coin.get("usd"))
-            if observed is None:
-                return "OUT_OF_SCOPE", "COINGECKO_PRICE_NOT_AVAILABLE", None
-            relative_delta = abs(expected - observed) / observed * 100.0
-            status = "CONTRADICTED" if relative_delta > 10.0 else "VERIFIED"
-            return status, "COINGECKO_PRICE_POLICY_V1", observed
-    return "OUT_OF_SCOPE", "COINGECKO_COIN_OR_PRICE_NOT_FOUND", None
-
-
 def _parse_raw_source_value(
     source: SourceSpec,
     records: Sequence[EvidenceRecord],
@@ -300,6 +221,11 @@ def _historical_validity_reason(
             return "EVIDENCE_INTERPRETATION_VERSION_UNSUPPORTED"
         if any(not record.body_complete or not record.raw_body_bytes for record in source_records):
             return "SOURCE_BODY_INCOMPLETE"
+        if any(
+            record.http_status is None or not 200 <= record.http_status < 300
+            for record in source_records
+        ):
+            return "SOURCE_HTTP_STATUS_INVALID"
         for record in source_records:
             observed_at = record.provider_observed_at
             fetched_at = record.fetched_at
@@ -625,57 +551,33 @@ def replay_verdict(
     if claim is None or claim.get("predicate") != "price":
         return _inconclusive("CLAIM_SNAPSHOT_INVALID", verdict)
 
-    providers = {record.provider for record in records}
-    adapter_versions = {record.provider_adapter_version for record in records}
-    if verdict.verification_mode in {"SINGLE_SOURCE", "MULTI_SOURCE"}:
-        status, reason, reducer = _replay_multi_source_conflict(
-            verdict, records, claim, verdict.policy_snapshot
-        )
-        return {
-            "verdict_id": verdict.verdict_id,
-            "claim_id": verdict.claim_id,
-            "original_status": verdict.status,
-            "replay_status": status,
-            "reason_codes_match": reducer.get("reason_codes") == list(verdict.reason_codes),
-            "matches_original": (
-                status != "INCONCLUSIVE"
-                and status == verdict.status
-                and reducer.get("reason_codes") == list(verdict.reason_codes)
-            ),
-            "reason_code": reason,
-            "reducer": reducer,
-            "replay_scope": "POLICY_GATE_AND_REDUCER",
-            "policy_gate_revalidated": reason == "POLICY_GATE_AND_REDUCER_REPLAYED",
-            "policy_id": verdict.policy_id,
-            "policy_version": verdict.policy_version,
-            "code_version": verdict.code_version,
-            "canonicalization_version": verdict.canonicalization_version,
-            "evidence_ids": list(verdict.evidence_ids),
-            "network_calls": 0,
-        }
+    if verdict.verification_mode not in {"SINGLE_SOURCE", "MULTI_SOURCE"}:
+        return _inconclusive("VERIFICATION_MODE_UNSUPPORTED", verdict)
+    policy_data = verdict.policy_snapshot.get("policy")
     if (
-        providers == {"moex.iss"}
-        and adapter_versions == {"moex-iss-adapter-v1"}
-        and claim.get("subject_kind") == "equity_security"
+        not isinstance(policy_data, dict)
+        or not isinstance(policy_data.get("source_policy"), dict)
+        or policy_data["source_policy"].get("verification_mode") != verdict.verification_mode
     ):
-        status, reason, observed = _replay_moex(verdict, records, claim)
-    elif (
-        providers == {"coingecko"}
-        and adapter_versions == {"coingecko-adapter-v1"}
-        and claim.get("subject_kind") == "crypto_asset"
-    ):
-        status, reason, observed = _replay_coingecko(records, claim)
-    else:
-        return _inconclusive("PROVIDER_SUBJECT_MISMATCH", verdict)
-
+        return _inconclusive("POLICY_SNAPSHOT_CONTEXT_MISMATCH", verdict)
+    status, reason, reducer = _replay_multi_source_conflict(
+        verdict, records, claim, verdict.policy_snapshot
+    )
     return {
         "verdict_id": verdict.verdict_id,
         "claim_id": verdict.claim_id,
         "original_status": verdict.status,
         "replay_status": status,
-        "matches_original": status != "INCONCLUSIVE" and status == verdict.status,
+        "reason_codes_match": reducer.get("reason_codes") == list(verdict.reason_codes),
+        "matches_original": (
+            status != "INCONCLUSIVE"
+            and status == verdict.status
+            and reducer.get("reason_codes") == list(verdict.reason_codes)
+        ),
         "reason_code": reason,
-        "observed_value": observed,
+        "reducer": reducer,
+        "replay_scope": "POLICY_GATE_AND_REDUCER",
+        "policy_gate_revalidated": reason == "POLICY_GATE_AND_REDUCER_REPLAYED",
         "policy_id": verdict.policy_id,
         "policy_version": verdict.policy_version,
         "code_version": verdict.code_version,
