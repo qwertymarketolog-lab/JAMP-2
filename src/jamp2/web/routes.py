@@ -8,10 +8,10 @@ import json
 import secrets
 import uuid
 from pathlib import Path
-from typing import Any
+from typing import Annotated, Any
 
 import httpx
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.encoders import jsonable_encoder
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
@@ -88,7 +88,7 @@ def build_dashboard_router(
     router = APIRouter(tags=["dashboard"])
 
     async def require_dashboard(
-        credentials: HTTPBasicCredentials | None = Depends(security),
+        credentials: Annotated[HTTPBasicCredentials | None, Depends(security)],
     ) -> None:
         if not dashboard_password:
             raise HTTPException(503, "DASHBOARD_AUTH_NOT_CONFIGURED")
@@ -152,7 +152,11 @@ def build_dashboard_router(
         try:
             payload = ClaimVerifyRequest.model_validate(await request.json())
         except (ValueError, ValidationError) as exc:
-            detail = jsonable_encoder(exc.errors()) if isinstance(exc, ValidationError) else "INVALID_JSON"
+            detail = (
+                jsonable_encoder(exc.errors())
+                if isinstance(exc, ValidationError)
+                else "INVALID_JSON"
+            )
             return secure(JSONResponse(
                 {"error": "VALIDATION_ERROR", "detail": detail}, status_code=422
             ))
@@ -176,7 +180,11 @@ def build_dashboard_router(
                     {"redirect_url": f"/verdicts/{verdict_id}"}, status_code=201
                 ))
             return secure(JSONResponse({"error": "VERDICT_ID_MISSING"}, status_code=502))
-        error = result.get("error", "CLAIM_VERIFICATION_FAILED") if isinstance(result, dict) else "CLAIM_VERIFICATION_FAILED"
+        error = (
+            result.get("error", "CLAIM_VERIFICATION_FAILED")
+            if isinstance(result, dict)
+            else "CLAIM_VERIFICATION_FAILED"
+        )
         detail = result.get("detail") if isinstance(result, dict) else None
         return secure(JSONResponse(
             {"error": error, "detail": detail}, status_code=upstream.status_code
