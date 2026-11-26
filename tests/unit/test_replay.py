@@ -723,3 +723,15 @@ def test_replay_rejects_required_source_id_snapshot_mismatch() -> None:
     result = replay_verdict(multi_source_verdict(snapshot), multi_source_records())
     assert result["replay_status"] == "INCONCLUSIVE"
     assert result["reason_code"] == "POLICY_SNAPSHOT_INVALID"
+
+
+def test_replay_rejects_unknown_source_policy_version() -> None:
+    snapshot = multi_source_policy_snapshot()
+    policy = dict(snapshot["policy"])
+    source_policy = dict(policy["source_policy"])
+    source_policy["version"] = 2
+    policy["source_policy"] = source_policy
+    snapshot["policy"] = policy
+    result = replay_verdict(multi_source_verdict(snapshot), multi_source_records())
+    assert result["replay_status"] == "INCONCLUSIVE"
+    assert result["reason_code"] == "SOURCE_POLICY_VERSION_UNSUPPORTED"

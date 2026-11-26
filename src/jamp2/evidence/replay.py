@@ -188,6 +188,10 @@ def _historical_validity_reason(
     required_sources = policy_data.get("required_sources")
     if not isinstance(source_policy, dict) or not isinstance(required_sources, list):
         return "POLICY_SNAPSHOT_INVALID"
+    if source_policy.get("policy_id") != policy_data.get("policy_id"):
+        return "POLICY_SNAPSHOT_INVALID"
+    if source_policy.get("version") != 1:
+        return "SOURCE_POLICY_VERSION_UNSUPPORTED"
     policy_source_ids = source_policy.get("required_sources")
     if (
         not isinstance(policy_source_ids, list)
