@@ -272,7 +272,11 @@ def _historical_validity_reason(
         by_provider.setdefault(record.provider, []).append(record)
     max_age_by_source = source_policy.get("max_age_by_source", {})
     default_max_age = source_policy.get("max_age_seconds")
-    if not isinstance(max_age_by_source, dict) or isinstance(default_max_age, bool) or not isinstance(default_max_age, int):
+    if (
+        not isinstance(max_age_by_source, dict)
+        or isinstance(default_max_age, bool)
+        or not isinstance(default_max_age, int)
+    ):
         return "POLICY_SNAPSHOT_INVALID"
     for source in required_sources:
         if not isinstance(source, dict):
@@ -463,7 +467,9 @@ def _replay_multi_source_conflict(
             )
             if source_status in {"E4_VERIFIED", "E4_CONTRADICTED"}:
                 if derived is None:
-                    raise ValueError("raw provider bytes are not interpretable by the bound adapter")
+                    raise ValueError(
+                        "raw provider bytes are not interpretable by the bound adapter"
+                    )
                 expected_value = _finite_positive(claim_snapshot.get("expected_value"))
                 if expected_value is None:
                     raise ValueError("claim expected value is invalid")
@@ -489,7 +495,11 @@ def _replay_multi_source_conflict(
                     raise ValueError("provider comparison parameters are unsupported")
                 threshold = parameters.get("threshold")
                 mode = parameters.get("mode")
-                if isinstance(threshold, bool) or not isinstance(threshold, (int, float)) or threshold < 0:
+                if (
+                    isinstance(threshold, bool)
+                    or not isinstance(threshold, (int, float))
+                    or threshold < 0
+                ):
                     raise ValueError("provider comparison threshold is invalid")
                 delta = abs(expected_value - raw_value) / raw_value
                 if mode == "RELATIVE_DELTA_PERCENT":
