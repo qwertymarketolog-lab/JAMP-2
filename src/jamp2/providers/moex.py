@@ -22,6 +22,7 @@ from typing import Any
 from jamp2.domain.claim import Claim as Jamp2Claim
 from jamp2.domain.claim import NormalizedClaim
 from jamp2.providers.base import ProviderResult
+from jamp2.providers.sanitization import sanitize_text, sanitize_url, sanitize_value
 
 MOEX_ISS_BASE = "https://iss.moex.com/iss"
 E4_VERIFIED = "E4_VERIFIED"
@@ -113,7 +114,7 @@ def _get_json(
         if raw_evidence is not None:
             raw_evidence.append({
                 "source": "moex.iss",
-                "url": url,
+                "url": sanitize_url(url),
                 "provider_observed_at": None,
                 "provider_observed_at_status": "HTTP_ERROR_NO_SOURCE_TIMESTAMP",
                 "fetched_at": datetime.now(UTC).isoformat(),
@@ -130,20 +131,20 @@ def _get_json(
         if is_timeout:
             logger.error(
                 "MOEX timeout (URLError): url=%s, timeout=%.1fs, phase=%s, reason=%r",
-                url, timeout, phase, exc.reason,
+                sanitize_url(url), timeout, phase, sanitize_text(repr(exc.reason)),
             )
         raise
     except TimeoutError:
         # Response-read timeouts may propagate directly as TimeoutError.
         logger.error(
             "MOEX timeout (direct): url=%s, timeout=%.1fs, phase=%s",
-            url, timeout, phase,
+            sanitize_url(url), timeout, phase,
         )
         raise
     capture = None
     if raw_evidence is not None:
         capture = {
-            "source": "moex.iss", "url": url, "status_code": status_code,
+            "source": "moex.iss", "url": sanitize_url(url), "status_code": status_code,
             "fetched_at": datetime.now(UTC).isoformat(), "body_complete": True,
             "raw_body_base64": base64.b64encode(body).decode("ascii"),
             "sha256_body": hashlib.sha256(body).hexdigest(),
@@ -185,6 +186,7 @@ def _failure_diagnostics(
     parse_error: str | None = None,
     tried_fields: list[str] | None = None,
     phase: str | None = None,
+    request_url: str | None = None,
 ) -> dict[str, Any]:
     if isinstance(exc, urllib.error.HTTPError):
         http_status = exc.code
@@ -194,16 +196,28 @@ def _failure_diagnostics(
         and isinstance(exc, (ValueError, json.JSONDecodeError))
     ):
         parse_error = f"{type(exc).__name__}: {exc}"
-    return {
+    diagnostics: dict[str, Any] = {
         "http_status": http_status,
         "board_id": board_id,
         "marketdata_columns": marketdata_columns,
         "marketdata_rows_count": marketdata_rows_count,
         "securities_columns": securities_columns,
-        "parse_error": parse_error,
+        "parse_error": sanitize_text(parse_error) if parse_error else None,
         "tried_fields": list(tried_fields or []),
         "phase": phase,
     }
+    if request_url is not None:
+        diagnostics["request_url"] = sanitize_url(request_url)
+    if isinstance(exc, urllib.error.URLError):
+        diagnostics.update(
+            {
+                "error_message": sanitize_text(str(exc)),
+                "error_reason": sanitize_text(str(exc.reason)),
+                "error_reason_type": type(exc.reason).__name__,
+                "error_reason_repr": sanitize_text(repr(exc.reason)),
+            }
+        )
+    return sanitize_value(diagnostics)
 
 
 def _verify_claim_with_moex(
@@ -278,10 +292,11 @@ def _verify_claim_with_moex(
             "securities.columns": "secid,shortname,latinname,emitent_title",
         }
     )
+    securities_url = f"{MOEX_ISS_BASE}/securities.json?{query}"
     securities_columns: list[str] | None = None
     try:
         catalog = _get_json(
-            f"{MOEX_ISS_BASE}/securities.json?{query}",
+            securities_url,
             timeout,
             phase="securities",
             raw_evidence=raw_evidence,
@@ -305,7 +320,10 @@ def _verify_claim_with_moex(
             "error_type": type(exc).__name__,
             "checked_source": "moex.iss",
             **_failure_diagnostics(
-                exc=exc, securities_columns=securities_columns, phase="securities"
+                exc=exc,
+                securities_columns=securities_columns,
+                phase="securities",
+                request_url=securities_url,
             ),
         }
 
@@ -385,6 +403,7 @@ def _verify_claim_with_moex(
                 marketdata_rows_count=marketdata_rows_count,
                 tried_fields=PRICE_FIELDS,
                 phase="marketdata",
+                request_url=price_url,
             ),
         }
 

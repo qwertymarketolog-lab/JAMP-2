@@ -58,3 +58,33 @@ jobs:
           name: jamp2-pytest-${{ github.run_id }}
           path: pytest-results.xml
           if-no-files-found: warn
+
+  moex-tls-diagnostics:
+    name: MOEX TLS diagnostics (manual dispatch only)
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout exact workflow commit
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install project
+        run: python -m pip install -e .
+      - name: Prepare diagnostic output directory
+        run: mkdir -p tests/e2e/artifacts
+      - name: Capture verified TLS peer chain and Python trust store
+        run: >-
+          python scripts/moex_tls_diagnostics.py
+          --host iss.moex.com
+          --output tests/e2e/artifacts/moex-tls-diagnostics.json
+      - name: Upload TLS diagnostic evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: moex-tls-diagnostics-${{ github.run_id }}
+          path: tests/e2e/artifacts/moex-tls-diagnostics.json
+          if-no-files-found: error
