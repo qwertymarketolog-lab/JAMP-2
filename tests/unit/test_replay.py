@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import replace
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from jamp2.domain.claim import NormalizedClaim
@@ -20,6 +20,7 @@ from jamp2.evidence.multisource import (
     build_policy_replay_context,
 )
 from jamp2.evidence.policy import SourcePolicyRecord, SourceProvenance
+import jamp2.evidence.replay as replay_module
 from jamp2.evidence.replay import replay_verdict
 from jamp2.evidence.verdict import VerdictRecord
 
@@ -173,6 +174,76 @@ def verdict(
             compute_policy_snapshot_sha256(policy_snapshot)
             if policy_snapshot is not None else None
         ),
+    )
+
+
+def rehash_evidence(record: EvidenceRecord, **changes: Any) -> EvidenceRecord:
+    updated = replace(record, record_hash=None, **changes)
+    return replace(updated, record_hash=compute_record_hash(updated))
+
+
+def multi_source_records(
+    values: tuple[float, float] = (100.0, 105.0),
+    *,
+    observed_times: tuple[datetime, datetime] | None = None,
+    fetched_times: tuple[datetime, datetime] | None = None,
+) -> list[EvidenceRecord]:
+    observed = observed_times or (
+        datetime(2026, 11, 20, 0, 0, tzinfo=UTC),
+        datetime(2026, 11, 20, 0, 0, tzinfo=UTC),
+    )
+    fetched = fetched_times or (
+        datetime(2026, 11, 20, 0, 0, 1, tzinfo=UTC),
+        datetime(2026, 11, 20, 0, 0, 1, tzinfo=UTC),
+    )
+    claim = claim_snapshot(unit="USD")
+    context = multi_source_replay_context()
+    result: list[EvidenceRecord] = []
+    for index, (provider, value) in enumerate((("source-a", values[0]), ("source-b", values[1]))):
+        raw = json.dumps({
+            "provider": provider, "identifier": "SBER", "currency": "USD",
+            "price_type": "SPOT", "price": value,
+        }).encode()
+        record = evidence(
+            f"evidence-{provider}", provider, f"https://{provider}.example/price", raw, claim
+        )
+        record = replace(
+            record,
+            verdict_status="SOURCE_OBSERVATION_CAPTURED",
+            parsed_value={
+                "claim": claim,
+                "replay_context": context,
+                "source_status": "E4_VERIFIED",
+                "provider_result": {
+                    "observed_last": value,
+                    "source_identifiers": ["SBER"],
+                    "quote_currency": "USD",
+                    "price_type": "SPOT",
+                },
+            },
+            hash_schema_version="v2",
+            captured_at_utc=fetched[index] + timedelta(seconds=1),
+            fetched_at=fetched[index],
+            provider_observed_at=observed[index],
+            provider_adapter_version="test-adapter-v1",
+        )
+        result.append(rehash_evidence(record))
+    return result
+
+
+def multi_source_verdict(
+    snapshot: dict[str, Any] | None = None,
+) -> VerdictRecord:
+    selected_snapshot = snapshot or multi_source_policy_snapshot()
+    record = verdict(
+        ("evidence-source-a", "evidence-source-b"),
+        status="AMBIGUOUS",
+        policy_snapshot=selected_snapshot,
+    )
+    return replace(
+        record,
+        verification_mode="MULTI_SOURCE",
+        reason_codes=("SOURCE_VALUES_DIVERGE",),
     )
 
 
@@ -456,4 +527,129 @@ def test_multi_source_replay_fails_closed_without_policy_context() -> None:
     assert result["policy_gate_revalidated"] is False
     assert result["reason_code"] == "POLICY_SNAPSHOT_MISSING"
     assert result["network_calls"] == 0
+
+
+
+def test_replay_rejects_missing_fetched_at() -> None:
+    records = multi_source_records()
+    records[0] = rehash_evidence(records[0], fetched_at=None)
+    result = replay_verdict(multi_source_verdict(), records)
+    assert result["replay_status"] == "INCONCLUSIVE"
+    assert result["reason_code"] == "FETCHED_AT_MISSING"
+
+
+def test_replay_rejects_provider_observed_after_fetch() -> None:
+    records = multi_source_records(
+        observed_times=(
+            datetime(2026, 11, 20, 0, 0, 2, tzinfo=UTC),
+            datetime(2026, 11, 20, 0, 0, tzinfo=UTC),
+        )
+    )
+    result = replay_verdict(multi_source_verdict(), records)
+    assert result["replay_status"] == "INCONCLUSIVE"
+    assert result["reason_code"] == "PROVIDER_OBSERVED_AFTER_FETCH"
+
+
+def test_replay_rejects_source_age_exceeded_at_original_decision() -> None:
+    observed = datetime(2026, 11, 19, 23, 57, tzinfo=UTC)
+    fetched = observed + timedelta(seconds=1)
+    records = multi_source_records(
+        observed_times=(observed, observed),
+        fetched_times=(fetched, fetched),
+    )
+    result = replay_verdict(multi_source_verdict(), records)
+    assert result["replay_status"] == "INCONCLUSIVE"
+    assert result["reason_code"] == "SOURCE_AGE_EXCEEDED_AT_DECISION"
+
+
+def test_replay_rejects_multi_source_timestamp_skew() -> None:
+    observed = (
+        datetime(2026, 11, 20, 0, 0, tzinfo=UTC),
+        datetime(2026, 11, 20, 0, 0, 6, tzinfo=UTC),
+    )
+    fetched = (observed[0] + timedelta(seconds=1), observed[1] + timedelta(seconds=1))
+    records = multi_source_records(observed_times=observed, fetched_times=fetched)
+    result = replay_verdict(multi_source_verdict(), records)
+    assert result["replay_status"] == "INCONCLUSIVE"
+    assert result["reason_code"] == "SOURCE_TIME_SKEW_EXCEEDED"
+
+
+def test_replay_rejects_unconfirmed_required_market_calendar() -> None:
+    snapshot = multi_source_policy_snapshot()
+    policy = dict(snapshot["policy"])
+    source_policy = dict(policy["source_policy"])
+    source_policy["market_calendar_required"] = True
+    policy["source_policy"] = source_policy
+    snapshot["policy"] = policy
+    snapshot["market_calendar"] = {
+        "required": True,
+        "qualification": {"source-a": None, "source-b": None},
+    }
+    result = replay_verdict(multi_source_verdict(snapshot), multi_source_records())
+    assert result["replay_status"] == "INCONCLUSIVE"
+    assert result["reason_code"] == "SOURCE_MARKET_CALENDAR_UNCONFIRMED"
+
+
+def test_replay_rejects_unproven_provenance_independence() -> None:
+    snapshot = multi_source_policy_snapshot()
+    policy = dict(snapshot["policy"])
+    source_policy = dict(policy["source_policy"])
+    provenance = [dict(item) for item in source_policy["provenance"]]
+    provenance[1]["upstream_entity"] = provenance[0]["upstream_entity"]
+    source_policy["provenance"] = provenance
+    policy["source_policy"] = source_policy
+    snapshot["policy"] = policy
+    result = replay_verdict(multi_source_verdict(snapshot), multi_source_records())
+    assert result["replay_status"] == "INCONCLUSIVE"
+    assert result["reason_code"] == "SOURCE_PROVENANCE_INDEPENDENCE_UNVERIFIED"
+
+
+def test_replay_rejects_policy_snapshot_bytes_changed_without_digest() -> None:
+    original = multi_source_verdict()
+    altered_snapshot = {**original.policy_snapshot, "policy_evaluator_version": "unknown"}
+    altered = replace(original, policy_snapshot=altered_snapshot)
+    result = replay_verdict(altered, multi_source_records())
+    assert result["replay_status"] == "INCONCLUSIVE"
+    assert result["reason_code"] == "POLICY_SNAPSHOT_DIGEST_MISMATCH"
+
+
+def test_replay_rejects_unknown_policy_evaluator_version() -> None:
+    snapshot = multi_source_policy_snapshot()
+    snapshot["policy_evaluator_version"] = "unknown-evaluator-v99"
+    result = replay_verdict(multi_source_verdict(snapshot), multi_source_records())
+    assert result["replay_status"] == "INCONCLUSIVE"
+    assert result["reason_code"] == "POLICY_EVALUATOR_VERSION_UNSUPPORTED"
+
+
+def test_replay_rejects_raw_bytes_that_disagree_with_derived_result() -> None:
+    records = multi_source_records()
+    altered_raw = json.dumps({
+        "provider": "source-a", "identifier": "SBER", "currency": "USD",
+        "price_type": "SPOT", "price": 999.0,
+    }).encode()
+    records[0] = rehash_evidence(
+        records[0], raw_body_bytes=altered_raw, raw_sha256=compute_sha256(altered_raw)
+    )
+    result = replay_verdict(multi_source_verdict(), records)
+    assert result["replay_status"] == "INCONCLUSIVE"
+    assert result["reason_code"] == "POLICY_REPLAY_CONTEXT_INVALID"
+
+
+def test_historical_replay_is_unchanged_after_evidence_becomes_stale(monkeypatch: Any) -> None:
+    import jamp2.evidence.replay as replay_module
+
+    records = multi_source_records()
+    original = multi_source_verdict()
+    first = replay_module.replay_verdict(original, records)
+
+    class FutureDateTime(datetime):
+        @classmethod
+        def now(cls, tz: Any = None) -> datetime:
+            return datetime(2035, 1, 1, tzinfo=UTC)
+
+    monkeypatch.setattr(replay_module, "datetime", FutureDateTime)
+    second = replay_module.replay_verdict(original, records)
+    assert first == second
+    assert second["replay_status"] == "AMBIGUOUS"
+    assert second["matches_original"] is True
 

@@ -587,6 +587,13 @@ def replay_verdict(
         return _inconclusive("POLICY_SNAPSHOT_INVALID", verdict)
     if verdict.policy_snapshot.get("schema_version") != "jamp2-policy-snapshot-v1":
         return _inconclusive("POLICY_SNAPSHOT_VERSION_UNSUPPORTED", verdict)
+    if verdict.policy_snapshot.get("policy_evaluator_version") != "jamp-source-policy-v1":
+        return _inconclusive("POLICY_EVALUATOR_VERSION_UNSUPPORTED", verdict)
+    if verdict.policy_snapshot.get("required_fields") != [
+        "raw_body_bytes", "raw_sha256", "body_complete", "fetched_at",
+        "provider_observed_at", "provider_adapter_version", "parser_version",
+    ]:
+        return _inconclusive("POLICY_SNAPSHOT_REQUIRED_FIELDS_UNSUPPORTED", verdict)
     if verdict.policy_snapshot.get("canonicalization_version") != CANONICALIZATION_VERSION:
         return _inconclusive("POLICY_SNAPSHOT_CANONICALIZATION_UNSUPPORTED", verdict)
     try:
