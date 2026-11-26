@@ -22,6 +22,7 @@ from typing import Any
 from jamp2.domain.claim import Claim as Jamp2Claim
 from jamp2.domain.claim import NormalizedClaim
 from jamp2.providers.base import ProviderResult
+from jamp2.providers.sanitization import sanitize_text, sanitize_url
 
 MOEX_ISS_BASE = "https://iss.moex.com/iss"
 E4_VERIFIED = "E4_VERIFIED"
@@ -113,7 +114,7 @@ def _get_json(
         if raw_evidence is not None:
             raw_evidence.append({
                 "source": "moex.iss",
-                "url": url,
+                "url": sanitize_url(url),
                 "provider_observed_at": None,
                 "provider_observed_at_status": "HTTP_ERROR_NO_SOURCE_TIMESTAMP",
                 "fetched_at": datetime.now(UTC).isoformat(),
@@ -201,19 +202,19 @@ def _failure_diagnostics(
         "marketdata_columns": marketdata_columns,
         "marketdata_rows_count": marketdata_rows_count,
         "securities_columns": securities_columns,
-        "parse_error": parse_error,
+        "parse_error": sanitize_text(parse_error) if parse_error else None,
         "tried_fields": list(tried_fields or []),
         "phase": phase,
     }
     if request_url is not None:
-        diagnostics["request_url"] = request_url
+        diagnostics["request_url"] = sanitize_url(request_url)
     if isinstance(exc, urllib.error.URLError):
         diagnostics.update(
             {
-                "error_message": str(exc),
-                "error_reason": str(exc.reason),
+                "error_message": sanitize_text(str(exc)),
+                "error_reason": sanitize_text(str(exc.reason)),
                 "error_reason_type": type(exc.reason).__name__,
-                "error_reason_repr": repr(exc.reason),
+                "error_reason_repr": sanitize_text(repr(exc.reason)),
             }
         )
     return diagnostics

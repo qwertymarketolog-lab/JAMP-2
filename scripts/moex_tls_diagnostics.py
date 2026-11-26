@@ -108,12 +108,18 @@ def _certificate_metadata(
         if "=" in line:
             key, value = line.split("=", 1)
             fields[key.strip().lower().replace(" ", "_")] = value.strip()
+    der = ssl.PEM_cert_to_DER_cert(pem.decode("ascii"))
+    ca_match = re.search(r"\\bCA\\s*:\\s*(TRUE|FALSE)\\b", output, re.IGNORECASE)
+    basic_constraints_ca = (
+        ca_match.group(1).upper() == "TRUE" if ca_match is not None else None
+    )
     return {
         "subject": fields.get("subject", "UNAVAILABLE"),
         "issuer": fields.get("issuer", "UNAVAILABLE"),
         "serial": fields.get("serial", "UNAVAILABLE"),
         "sha256_fingerprint": fields.get("sha256_fingerprint", "UNAVAILABLE"),
-        "certificate_sha256": hashlib.sha256(pem).hexdigest(),
+        "certificate_sha256": hashlib.sha256(der).hexdigest(),
+        "basic_constraints_ca": basic_constraints_ca,
         "pem": pem.decode("ascii"),
     }
 
@@ -177,6 +183,46 @@ def _scan_trust_store(
     }
 
 
+def _identify_peer_intermediate(
+    peer_chain: list[dict[str, Any]],
+) -> dict[str, Any] | None:
+    """Identify the CA certificate that issued the peer leaf certificate."""
+    leaves = [item for item in peer_chain if item.get("basic_constraints_ca") is False]
+    if len(leaves) != 1:
+        return None
+    leaf = leaves[0]
+    issuer = leaf.get("issuer")
+    if not isinstance(issuer, str) or issuer == "UNAVAILABLE":
+        return None
+    candidates = [
+        item
+        for item in peer_chain
+        if item.get("basic_constraints_ca") is True and item.get("subject") == issuer
+    ]
+    return candidates[0] if len(candidates) == 1 else None
+
+
+def _verify_peer_intermediate(
+    peer_chain: list[dict[str, Any]], expected_sha256: str
+) -> dict[str, Any]:
+    """Compare the actual peer Intermediate DER digest to a configured pin."""
+    intermediate = _identify_peer_intermediate(peer_chain)
+    if intermediate is None:
+        return {"status": "UNKNOWN", "reason": "PEER_INTERMEDIATE_NOT_IDENTIFIED"}
+    actual = intermediate.get("certificate_sha256")
+    if not isinstance(actual, str) or not re.fullmatch(r"[0-9a-fA-F]{64}", actual):
+        return {"status": "UNKNOWN", "reason": "PEER_INTERMEDIATE_DER_DIGEST_UNAVAILABLE"}
+    expected = expected_sha256.lower()
+    actual_normalized = actual.lower()
+    return {
+        "status": "MATCH" if actual_normalized == expected else "MISMATCH",
+        "expected_sha256_der": expected,
+        "actual_sha256_der": actual_normalized,
+        "subject": intermediate.get("subject"),
+        "issuer": intermediate.get("issuer"),
+    }
+
+
 def collect_official_ca_audit(
     peer_chain: list[dict[str, Any]],
     host: str,
@@ -188,8 +234,17 @@ def collect_official_ca_audit(
     """Download AIA-published CA files, pin their DER hashes, and audit runner trust."""
     openssl = openssl or shutil.which("openssl")
     report: dict[str, Any] = {
-        "sources": "AIA URIs embedded in the observed MOEX peer certificate chain",
+        "sources": "Configured certificate reference URLs; not asserted to be peer AIA URIs",
+        "reference_provenance": {
+            "status": "UNVERIFIED_EXTERNAL_PROVENANCE",
+            "reason": "A configured digest and a matching download do not independently prove the publisher or origin of the reference digest.",
+            "transport": "HTTP",
+        },
         "certificates": {},
+        "peer_intermediate_pinning": {
+            "status": "UNKNOWN",
+            "reason": "Peer chain not yet evaluated",
+        },
         "trust_store_membership": None,
         "chain_verification": None,
     }
@@ -200,7 +255,7 @@ def collect_official_ca_audit(
     downloaded_pem: dict[str, bytes] = {}
     for name, spec in _OFFICIAL_CA.items():
         entry: dict[str, Any] = {
-            "url": spec["url"],
+            "url": sanitize_url(spec["url"]),
             "expected_sha256_der": spec["sha256"],
             "downloaded": False,
             "fingerprint_match": False,
@@ -230,7 +285,7 @@ def collect_official_ca_audit(
             )
             downloaded_pem[name] = pem
         except Exception as exc:  # diagnostics must retain per-source failures
-            entry["error"] = f"{type(exc).__name__}: {exc}"
+            entry["error"] = sanitize_text(f"{type(exc).__name__}: {exc}")
         report["certificates"][name] = entry
 
     paths = ssl.get_default_verify_paths()
@@ -244,26 +299,27 @@ def collect_official_ca_audit(
 
     root_ok = report["certificates"].get("root", {}).get("fingerprint_match")
     sub_ok = report["certificates"].get("sub", {}).get("fingerprint_match")
-    leaf = next(
-        (item for item in peer_chain if "MOEX" in item.get("subject", "").upper()
-         or "*.MOEX.COM" in item.get("subject", "").upper()),
-        None,
+    intermediate = _identify_peer_intermediate(peer_chain)
+    report["peer_intermediate_pinning"] = _verify_peer_intermediate(
+        peer_chain, _OFFICIAL_CA["sub"]["sha256"]
     )
-    intermediate = next(
-        (
-            item
-            for item in peer_chain
-            if "RUSSIAN TRUSTED SUB CA" in item.get("subject", "").upper()
-        ),
-        None,
-    )
-    if root_ok and sub_ok and leaf and intermediate:
+    leaves = [item for item in peer_chain if item.get("basic_constraints_ca") is False]
+    leaf = leaves[0] if len(leaves) == 1 else None
+    if (
+        root_ok
+        and sub_ok
+        and leaf
+        and intermediate
+        and report["peer_intermediate_pinning"]["status"] == "MATCH"
+    ):
         with tempfile.TemporaryDirectory(prefix="jamp2-moex-ca-audit-") as temp:
             root_path = Path(temp) / "root.pem"
             sub_path = Path(temp) / "sub.pem"
             leaf_path = Path(temp) / "leaf.pem"
             root_path.write_bytes(downloaded_pem["root"])
-            sub_path.write_text(intermediate["pem"], encoding="ascii")
+            # Verify using the separately downloaded, digest-matched reference
+            # Intermediate; peer bytes must independently match that DER pin.
+            sub_path.write_bytes(downloaded_pem["sub"])
             leaf_path.write_text(leaf["pem"], encoding="ascii")
             verify = runner(
                 [
@@ -283,7 +339,7 @@ def collect_official_ca_audit(
     else:
         report["chain_verification"] = {
             "status": "NOT_RUN",
-            "reason": "Official root/sub fingerprints or peer leaf/intermediate unavailable",
+            "reason": "Official root/sub digest, peer leaf, or pinned peer Intermediate unavailable or mismatched",
             "trust_store_modified": False,
         }
     return report
@@ -340,7 +396,7 @@ def collect_tls_diagnostics(
             timeout=20,
         )
     except (OSError, subprocess.TimeoutExpired) as exc:
-        report["probe_error"] = f"{type(exc).__name__}: {exc}"
+        report["probe_error"] = sanitize_text(f"{type(exc).__name__}: {exc}")
         return report
 
     transcript_bytes = result.stdout + b"\n" + result.stderr
