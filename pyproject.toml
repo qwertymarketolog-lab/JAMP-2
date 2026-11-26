@@ -16,6 +16,9 @@ dependencies = [
   "httpx>=0.27,<1",
 ]
 
+[tool.setuptools.package-data]
+jamp2 = ["web/templates/*.html", "web/static/*.css", "web/static/*.js"]
+
 [project.optional-dependencies]
 dev = ["pytest>=8,<9", "ruff>=0.9,<1", "mypy>=1.13,<2"]
 
