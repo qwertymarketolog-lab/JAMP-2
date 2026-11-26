@@ -1,0 +1,17 @@
+{% extends "base.html" %}
+{% block title %}Проверка утверждения · JAMP 2{% endblock %}
+{% block content %}
+<section class="panel hero"><p class="eyebrow">PILOT V1</p><h1>Проверка фактического утверждения</h1>
+<p class="muted">Укажите проверяемое значение. JAMP сохранит наблюдение источника и отдельный вердикт.</p></section>
+<section class="panel"><form id="claim-form">
+<label for="text">Утверждение</label><textarea id="text" required maxlength="2000" rows="3">Цена Bitcoin составляет 95 000 USD</textarea>
+<div class="form-grid">
+<div><label for="subject-kind">Тип объекта</label><select id="subject-kind"><option value="crypto_asset">crypto_asset</option><option value="equity_security">equity_security</option></select></div>
+<div><label for="identifier">Идентификатор</label><input id="identifier" required maxlength="120" value="bitcoin"></div>
+<div><label for="expected-value">Ожидаемое значение</label><input id="expected-value" type="number" min="0.000001" step="any" required value="95000"></div>
+<div><label for="unit">Валюта</label><select id="unit"><option value="USD">USD</option><option value="RUB">RUB</option></select></div>
+</div>
+<button type="submit" id="submit-claim">Проверить утверждение</button><p id="claim-error" class="error" role="alert" hidden></p>
+</form></section>
+<p class="muted small">Доступ оператора защищён HTTP Basic. API-ключ остаётся на сервере и не передаётся браузеру.</p>
+{% endblock %}
