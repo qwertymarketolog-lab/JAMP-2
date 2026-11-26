@@ -1,7 +1,7 @@
 # JAMP Operator Console — Product Contract
 
-**Status:** BASELINE / APPROVED BY PRODUCT OWNER  
-**Branch:** feat/jamp-operator-console  
+**Status:** BASELINE / APPROVED BY PRODUCT OWNER
+**Branch:** feat/jamp-operator-console
 **Product:** JAMP-2 · Trust Layer
 
 ## 1. Product decision
