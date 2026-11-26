@@ -115,7 +115,7 @@ def _certificate_metadata(
             key, value = line.split("=", 1)
             fields[key.strip().lower().replace(" ", "_")] = value.strip()
     der = ssl.PEM_cert_to_DER_cert(pem.decode("ascii"))
-    ca_match = re.search(r"\\bCA\\s*:\\s*(TRUE|FALSE)\\b", output, re.IGNORECASE)
+    ca_match = re.search(r"\bCA\s*:\s*(TRUE|FALSE)\b", output, re.IGNORECASE)
     basic_constraints_ca = (
         ca_match.group(1).upper() == "TRUE" if ca_match is not None else None
     )
@@ -237,7 +237,7 @@ def collect_official_ca_audit(
     openssl: str | None = None,
     downloader: Any = urllib.request.urlopen,
 ) -> dict[str, Any]:
-    """Download AIA-published CA files, pin their DER hashes, and audit runner trust."""
+    """Download configured CA references, compare DER pins, and audit runner trust."""
     openssl = openssl or shutil.which("openssl")
     report: dict[str, Any] = {
         "sources": "Configured certificate reference URLs; not asserted to be peer AIA URIs",

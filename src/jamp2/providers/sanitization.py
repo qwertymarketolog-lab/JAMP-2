@@ -27,9 +27,9 @@ _SENSITIVE_NAMES = {
     "xauthtoken",
 }
 _SECRET_ASSIGNMENT_RE = re.compile(
-    r"(?ix)(?P<key>[a-z0-9_.-]*(?:api[_-]?key|access[_-]?token|auth(?:orization)?|"
+    r"(?ix)(?P<quote>[\"']?)(?P<key>[a-z0-9_.-]*(?:api[_-]?key|access[_-]?token|auth(?:orization)?|"
     r"client[_-]?secret|cookie|password|passwd|secret|signature|sig|token)"
-    r"[a-z0-9_.-]*)\s*(?P<sep>[:=])\s*"
+    r"[a-z0-9_.-]*)(?P=quote)\s*(?P<sep>[:=])\s*"
     r'(?P<value>"[^"]*"|\'[^\']*\'|[^\s,;&]+)'
 )
 _BEARER_RE = re.compile(r"(?i)\bBearer\s+[A-Za-z0-9._~+/-]+=*")
@@ -74,7 +74,10 @@ def sanitize_text(value: str) -> str:
     """Redact common credential assignments, bearer tokens, and embedded URLs."""
     cleaned = _BEARER_RE.sub("Bearer [REDACTED]", value)
     cleaned = _SECRET_ASSIGNMENT_RE.sub(
-        lambda match: f"{match.group('key')}{match.group('sep')}[REDACTED]",
+        lambda match: (
+            f"{match.group('quote')}{match.group('key')}{match.group('quote')}"
+            f"{match.group('sep')}[REDACTED]"
+        ),
         cleaned,
     )
     return _URL_RE.sub(lambda match: sanitize_url(match.group(0)), cleaned)
