@@ -110,7 +110,9 @@ class VerdictRow(Base):
     reason_codes: Mapped[list[str]] = mapped_column(JSONB)
     explanation: Mapped[str] = mapped_column(Text)
     verification_mode: Mapped[str | None] = mapped_column(String(16), nullable=True)
-    policy_snapshot: Mapped[JSONValue | None] = mapped_column(JSONB, nullable=True)
+    policy_snapshot: Mapped[JSONValue | None] = mapped_column(
+        JSONB(none_as_null=True), nullable=True
+    )
     policy_snapshot_sha256: Mapped[str | None] = mapped_column(String(64), nullable=True)
     parent_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
     record_hash: Mapped[str] = mapped_column(String(64))

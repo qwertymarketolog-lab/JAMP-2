@@ -269,7 +269,13 @@ def test_replay_fails_closed_for_unknown_policy_or_bad_digest() -> None:
     assert replay_verdict(unknown_policy, [record])["reason_code"] == "POLICY_SNAPSHOT_MISSING"
     corrupted = replace(record, raw_sha256="0" * 64)
     assert (
-        replay_verdict(verdict(("evidence-catalog",)), [corrupted])["reason_code"]
+        replay_verdict(
+            verdict(
+                ("evidence-catalog",),
+                policy_snapshot=multi_source_policy_snapshot(),
+            ),
+            [corrupted],
+        )["reason_code"]
         == "EVIDENCE_INTEGRITY_OR_VERSION_MISMATCH"
     )
 

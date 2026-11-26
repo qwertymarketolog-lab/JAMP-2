@@ -344,7 +344,8 @@ def test_api_multi_source_conflict_is_persisted_and_replayed_from_postgres() -> 
             self.calls += 1
             observed_at = datetime.now(UTC).isoformat()
             raw = (
-                f'{{"provider":"{self.provider_id}","price":{self.price:.2f},"currency":"USD"}}'
+                f'{{"provider":"{self.provider_id}","identifier":"SBER","price":{self.price:.2f},'
+                f'"currency":"USD","price_type":"SPOT"}}'
             ).encode()
             return ProviderResult(
                 "E4_VERIFIED",

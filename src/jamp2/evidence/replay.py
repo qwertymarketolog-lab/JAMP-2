@@ -43,6 +43,8 @@ def _inconclusive(reason: str, verdict: VerdictRecord) -> dict[str, object]:
         "original_status": verdict.status,
         "replay_status": "INCONCLUSIVE",
         "matches_original": False,
+        "reason_codes_match": False,
+        "policy_gate_revalidated": False,
         "reason_code": reason,
         "policy_id": verdict.policy_id,
         "policy_version": verdict.policy_version,
