@@ -10,7 +10,10 @@ from unittest.mock import patch
 
 from scripts.moex_tls_diagnostics import (
     _OFFICIAL_CA,
+    _identify_peer_intermediate,
+    _identify_peer_leaf,
     _scan_trust_store,
+    _verify_peer_intermediate,
     collect_official_ca_audit,
     collect_tls_diagnostics,
     python_trust_store_report,
@@ -156,3 +159,68 @@ def test_trust_store_membership_uses_exact_root_der_fingerprint(tmp_path: Path) 
     assert report["scanned_files"] == 1
     assert report["root_sha256_present"] is True
     assert report["root_sha256"] == expected
+
+
+def test_peer_chain_identifies_leaf_without_basic_constraints_and_deduplicates() -> None:
+    leaf = {
+        "subject": "CN=*.moex.com",
+        "issuer": "CN=Russian Trusted Sub CA",
+        "basic_constraints_ca": None,
+        "certificate_sha256": "a" * 64,
+    }
+    intermediate = {
+        "subject": "CN=Russian Trusted Sub CA",
+        "issuer": "CN=Russian Trusted Root CA",
+        "basic_constraints_ca": True,
+        "certificate_sha256": "b" * 64,
+    }
+    root = {
+        "subject": "CN=Russian Trusted Root CA",
+        "issuer": "CN=Russian Trusted Root CA",
+        "basic_constraints_ca": True,
+        "certificate_sha256": "c" * 64,
+    }
+
+    peer_chain = [leaf, dict(leaf), intermediate, root]
+
+    assert _identify_peer_leaf(peer_chain) is leaf
+    assert _identify_peer_intermediate(peer_chain) is intermediate
+    pinning = _verify_peer_intermediate(peer_chain, "b" * 64)
+    assert pinning["status"] == "MATCH"
+    assert pinning["actual_sha256_der"] == "b" * 64
+
+
+def test_peer_chain_identification_fails_closed_when_leaf_is_ambiguous() -> None:
+    first_leaf = {
+        "subject": "CN=first.moex.com",
+        "issuer": "CN=Russian Trusted Sub CA",
+        "basic_constraints_ca": None,
+        "certificate_sha256": "a" * 64,
+    }
+    second_leaf = {
+        "subject": "CN=second.moex.com",
+        "issuer": "CN=Russian Trusted Sub CA",
+        "basic_constraints_ca": False,
+        "certificate_sha256": "d" * 64,
+    }
+    intermediate = {
+        "subject": "CN=Russian Trusted Sub CA",
+        "issuer": "CN=Russian Trusted Root CA",
+        "basic_constraints_ca": True,
+        "certificate_sha256": "b" * 64,
+    }
+    root = {
+        "subject": "CN=Russian Trusted Root CA",
+        "issuer": "CN=Russian Trusted Root CA",
+        "basic_constraints_ca": True,
+        "certificate_sha256": "c" * 64,
+    }
+
+    peer_chain = [first_leaf, second_leaf, intermediate, root]
+
+    assert _identify_peer_leaf(peer_chain) is None
+    assert _identify_peer_intermediate(peer_chain) is None
+    assert _verify_peer_intermediate(peer_chain, "b" * 64) == {
+        "status": "UNKNOWN",
+        "reason": "PEER_INTERMEDIATE_NOT_IDENTIFIED",
+    }
