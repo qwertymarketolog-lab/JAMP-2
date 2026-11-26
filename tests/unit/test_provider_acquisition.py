@@ -9,6 +9,7 @@ import subprocess
 import urllib.error
 import uuid
 from dataclasses import replace
+from pathlib import Path
 from typing import Any
 from unittest.mock import patch
 

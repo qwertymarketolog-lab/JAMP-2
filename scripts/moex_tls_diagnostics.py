@@ -243,7 +243,10 @@ def collect_official_ca_audit(
         "sources": "Configured certificate reference URLs; not asserted to be peer AIA URIs",
         "reference_provenance": {
             "status": "UNVERIFIED_EXTERNAL_PROVENANCE",
-            "reason": "A configured digest and a matching download do not independently prove the publisher or origin of the reference digest.",
+            "reason": (
+                "A configured digest and a matching download do not independently prove "
+                "the publisher or origin of the reference digest."
+            ),
             "transport": "HTTP",
         },
         "certificates": {},
@@ -345,7 +348,10 @@ def collect_official_ca_audit(
     else:
         report["chain_verification"] = {
             "status": "NOT_RUN",
-            "reason": "Official root/sub digest, peer leaf, or pinned peer Intermediate unavailable or mismatched",
+            "reason": (
+                "Official root/sub digest, peer leaf, or pinned peer Intermediate "
+                "unavailable or mismatched"
+            ),
             "trust_store_modified": False,
         }
     return report
