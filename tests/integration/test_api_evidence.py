@@ -355,10 +355,12 @@ def test_api_multi_source_conflict_is_persisted_and_replayed_from_postgres() -> 
                 [
                     {
                         "source": self.provider_id,
+                        "fixture_provenance": "SYNTHETIC",
                         "url": f"https://{self.host}/price",
                         "status_code": 200,
                         "body_complete": True,
                         "provider_observed_at": observed_at,
+                        "source_date": "2026-11-25",
                         "fetched_at": observed_at,
                         "raw_body_base64": base64.b64encode(raw).decode("ascii"),
                         "sha256_body": compute_sha256(raw),
@@ -456,6 +458,7 @@ def test_api_multi_source_conflict_is_persisted_and_replayed_from_postgres() -> 
                 assert row["raw_sha256"] == compute_sha256(raw)
                 assert row["body_complete"] is True
                 assert row["parsed_value"]["provider_result"]["quote_currency"] == "USD"
+                assert row["parsed_value"]["fixture_provenance"] == "SYNTHETIC"
             observed_values = {
                 row["parsed_value"]["provider_result"]["observed_last"]
                 for row in evidence_rows
@@ -472,6 +475,7 @@ def test_api_multi_source_conflict_is_persisted_and_replayed_from_postgres() -> 
             verdict_row = verdict_response.json()
             assert verdict_row["status"] == "AMBIGUOUS"
             assert verdict_row["verification_mode"] == "MULTI_SOURCE"
+            assert "SOURCE_VALUES_DIVERGE" in verdict_row["reason_codes"]
             assert set(verdict_row["evidence_ids"]) == set(body["evidence_ids"])
 
             replay = await client.post(f"/v1/verdicts/{body['verdict_id']}/replay")

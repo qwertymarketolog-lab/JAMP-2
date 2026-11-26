@@ -206,6 +206,11 @@ def _evidence_record(
         **parsed_value,
         "capture_metadata_diagnostics": _capture_metadata_diagnostics(observation),
     }
+    fixture_provenance = observation.get("fixture_provenance")
+    if fixture_provenance is not None:
+        if fixture_provenance != "SYNTHETIC":
+            raise IntegrityViolation("unsupported fixture provenance marker")
+        parsed_value_with_diagnostics["fixture_provenance"] = fixture_provenance
     if not hmac.compare_digest(actual_digest, source_digest):
         raise IntegrityViolation("provider raw response digest mismatch")
     if source != provider_id:
