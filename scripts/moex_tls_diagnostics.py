@@ -21,6 +21,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from jamp2.providers.sanitization import sanitize_text, sanitize_url
+
 _CERTIFICATE_RE = re.compile(
     rb"-----BEGIN CERTIFICATE-----.*?-----END CERTIFICATE-----", re.DOTALL
 )
@@ -86,7 +88,7 @@ def python_trust_store_report() -> dict[str, Any]:
 
 def _certificate_metadata(
     pem: bytes, *, openssl: str, runner: Any
-) -> dict[str, str]:
+) -> dict[str, Any]:
     result = runner(
         [
             openssl,
@@ -97,6 +99,10 @@ def _certificate_metadata(
             "-serial",
             "-fingerprint",
             "-sha256",
+            "-nameopt",
+            "RFC2253",
+            "-ext",
+            "basicConstraints",
         ],
         input=pem,
         capture_output=True,

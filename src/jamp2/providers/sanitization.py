@@ -10,6 +10,7 @@ from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 _SENSITIVE_NAMES = {
     "apikey",
     "accesstoken",
+    "auth",
     "authtoken",
     "authorization",
     "clientsecret",
@@ -26,10 +27,10 @@ _SENSITIVE_NAMES = {
     "xauthtoken",
 }
 _SECRET_ASSIGNMENT_RE = re.compile(
-    r"""(?ix)(?P<key>[a-z0-9_.-]*(?:api[_-]?key|access[_-]?token|auth(?:orization)?|"
+    r"(?ix)(?P<key>[a-z0-9_.-]*(?:api[_-]?key|access[_-]?token|auth(?:orization)?|"
     r"client[_-]?secret|cookie|password|passwd|secret|signature|sig|token)"
     r"[a-z0-9_.-]*)\s*(?P<sep>[:=])\s*"
-    r"(?P<value>"[^"]*"|'[^']*'|[^\s,;&]+)"""
+    r'(?P<value>"[^"]*"|\'[^\']*\'|[^\s,;&]+)'
 )
 _BEARER_RE = re.compile(r"(?i)\bBearer\s+[A-Za-z0-9._~+/-]+=*")
 _URL_RE = re.compile(r"https?://[^\s<>\"']+")
@@ -43,7 +44,7 @@ def _is_sensitive_name(value: str) -> bool:
     normalized = _normalized_name(value)
     return normalized in _SENSITIVE_NAMES or any(
         marker in normalized
-        for marker in ("apikey", "token", "secret", "password", "authorization", "cookie")
+        for marker in ("apikey", "token", "secret", "password", "authorization", "auth", "cookie")
     )
 
 

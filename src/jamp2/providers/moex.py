@@ -144,7 +144,7 @@ def _get_json(
     capture = None
     if raw_evidence is not None:
         capture = {
-            "source": "moex.iss", "url": url, "status_code": status_code,
+            "source": "moex.iss", "url": sanitize_url(url), "status_code": status_code,
             "fetched_at": datetime.now(UTC).isoformat(), "body_complete": True,
             "raw_body_base64": base64.b64encode(body).decode("ascii"),
             "sha256_body": hashlib.sha256(body).hexdigest(),
@@ -217,7 +217,7 @@ def _failure_diagnostics(
                 "error_reason_repr": sanitize_text(repr(exc.reason)),
             }
         )
-    return diagnostics
+    return sanitize_value(diagnostics)
 
 
 def _verify_claim_with_moex(

@@ -230,10 +230,12 @@ def test_moex_failure_phase_and_original_cause_survive_to_ledger() -> None:
     asyncio.run(run())
 
 
-def _make_real_peer_chain(tmp_path: Path) -> tuple[list[dict[str, Any]], bytes]:
+def _make_real_peer_chain(tmp_path: Path) -> tuple[list[dict[str, Any]], str]:
     import hashlib
     import shutil
     import ssl
+
+    from scripts.moex_tls_diagnostics import _certificate_metadata
 
     openssl = shutil.which("openssl")
     assert openssl is not None, "OpenSSL is required for real X.509 fixture tests"
@@ -323,7 +325,6 @@ def test_peer_intermediate_is_unknown_without_issuer_ca_match() -> None:
 
 def test_certificate_sha256_uses_der_not_pem_bytes(tmp_path: Path) -> None:
     import hashlib
-    import ssl
     import shutil
 
     openssl = shutil.which("openssl")
