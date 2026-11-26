@@ -189,20 +189,63 @@ def _scan_trust_store(
     }
 
 
+def _deduplicate_peer_chain(
+    peer_chain: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Remove repeated certificates only when their DER SHA-256 is available."""
+    unique: list[dict[str, Any]] = []
+    seen_fingerprints: set[str] = set()
+    for certificate in peer_chain:
+        fingerprint = certificate.get("certificate_sha256")
+        if isinstance(fingerprint, str) and re.fullmatch(r"[0-9a-fA-F]{64}", fingerprint):
+            normalized = fingerprint.lower()
+            if normalized in seen_fingerprints:
+                continue
+            seen_fingerprints.add(normalized)
+        unique.append(certificate)
+    return unique
+
+
+def _identify_peer_leaf(
+    peer_chain: list[dict[str, Any]],
+) -> dict[str, Any] | None:
+    """Identify the unique terminal certificate in the peer's issuer/subject graph.
+
+    Basic Constraints may be absent on a valid server leaf. In that case, chain
+    topology identifies the terminal certificate; an explicitly CA-marked
+    certificate is never accepted as the leaf. Ambiguous or incomplete chains
+    remain unidentified.
+    """
+    certificates = _deduplicate_peer_chain(peer_chain)
+    issuer_names = {
+        item.get("issuer")
+        for item in certificates
+        if isinstance(item.get("issuer"), str) and item.get("issuer") != "UNAVAILABLE"
+    }
+    leaves = [
+        item
+        for item in certificates
+        if isinstance(item.get("subject"), str)
+        and item.get("subject") != "UNAVAILABLE"
+        and item.get("subject") not in issuer_names
+        and item.get("basic_constraints_ca") is not True
+        and isinstance(item.get("issuer"), str)
+        and item.get("issuer") != "UNAVAILABLE"
+    ]
+    return leaves[0] if len(leaves) == 1 else None
+
+
 def _identify_peer_intermediate(
     peer_chain: list[dict[str, Any]],
 ) -> dict[str, Any] | None:
-    """Identify the CA certificate that issued the peer leaf certificate."""
-    leaves = [item for item in peer_chain if item.get("basic_constraints_ca") is False]
-    if len(leaves) != 1:
+    """Identify the unique CA certificate that issued the peer leaf."""
+    leaf = _identify_peer_leaf(peer_chain)
+    if leaf is None:
         return None
-    leaf = leaves[0]
     issuer = leaf.get("issuer")
-    if not isinstance(issuer, str) or issuer == "UNAVAILABLE":
-        return None
     candidates = [
         item
-        for item in peer_chain
+        for item in _deduplicate_peer_chain(peer_chain)
         if item.get("basic_constraints_ca") is True and item.get("subject") == issuer
     ]
     return candidates[0] if len(candidates) == 1 else None
@@ -312,8 +355,7 @@ def collect_official_ca_audit(
     report["peer_intermediate_pinning"] = _verify_peer_intermediate(
         peer_chain, _OFFICIAL_CA["sub"]["sha256"]
     )
-    leaves = [item for item in peer_chain if item.get("basic_constraints_ca") is False]
-    leaf = leaves[0] if len(leaves) == 1 else None
+    leaf = _identify_peer_leaf(peer_chain)
     if (
         root_ok
         and sub_ok
