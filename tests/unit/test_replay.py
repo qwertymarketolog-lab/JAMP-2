@@ -5,9 +5,14 @@ from __future__ import annotations
 import json
 from dataclasses import replace
 from datetime import UTC, datetime
+from typing import Any
 
 from jamp2.domain.claim import NormalizedClaim
-from jamp2.evidence.digest import compute_record_hash, compute_sha256
+from jamp2.evidence.digest import (
+    compute_policy_snapshot_sha256,
+    compute_record_hash,
+    compute_sha256,
+)
 from jamp2.evidence.model import EvidenceRecord
 from jamp2.evidence.multisource import (
     MultiSourcePolicy,
@@ -44,7 +49,7 @@ def evidence(
     *,
     http_status: int = 200,
 ) -> EvidenceRecord:
-    return EvidenceRecord(
+    record = EvidenceRecord(
         evidence_id=evidence_id,
         claim_id="claim-replay",
         provider=provider,
@@ -63,6 +68,7 @@ def evidence(
         else "coingecko-adapter-v1",
         parser_version="jamp-provider-json-v1",
     )
+    return replace(record, record_hash=compute_record_hash(record))
 
 
 def multi_source_replay_context() -> dict[str, object]:
@@ -123,7 +129,33 @@ def multi_source_replay_context() -> dict[str, object]:
     )
 
 
-def verdict(evidence_ids: tuple[str, ...], status: str = "VERIFIED") -> VerdictRecord:
+def multi_source_policy_snapshot() -> dict[str, Any]:
+    context = multi_source_replay_context()
+    return {
+        "schema_version": "jamp2-policy-snapshot-v1",
+        "canonicalization_version": "jamp-json-nfc-v1",
+        "policy_evaluator_version": "jamp-source-policy-v1",
+        "parser_version": "jamp-provider-json-v1",
+        "policy": context["policy"],
+        "required_fields": [
+            "raw_body_bytes", "raw_sha256", "body_complete", "fetched_at",
+            "provider_observed_at", "provider_adapter_version", "parser_version",
+        ],
+        "comparison_parameters": {
+            "test-adapter-v1": {"mode": "RELATIVE_DELTA", "threshold": 0.05},
+        },
+        "market_calendar": {
+            "required": False,
+            "qualification": {"source-a": None, "source-b": None},
+        },
+    }
+
+
+def verdict(
+    evidence_ids: tuple[str, ...],
+    status: str = "VERIFIED",
+    policy_snapshot: dict[str, Any] | None = None,
+) -> VerdictRecord:
     return VerdictRecord(
         verdict_id="verdict-replay",
         claim_id="claim-replay",
@@ -133,9 +165,14 @@ def verdict(evidence_ids: tuple[str, ...], status: str = "VERIFIED") -> VerdictR
         policy_version="provider-defaults-v1",
         code_version="recorded-commit-sha",
         canonicalization_version="jamp-json-nfc-v1",
-        decided_at_utc=datetime(2026, 11, 20, tzinfo=UTC),
+        decided_at_utc=datetime(2026, 11, 20, 0, 0, 10, tzinfo=UTC),
         reason_codes=("E4_VERIFIED",),
         explanation="Original recorded decision.",
+        policy_snapshot=policy_snapshot,
+        policy_snapshot_sha256=(
+            compute_policy_snapshot_sha256(policy_snapshot)
+            if policy_snapshot is not None else None
+        ),
     )
 
 
@@ -164,9 +201,9 @@ def test_moex_replay_reparses_stored_catalog_and_marketdata_bytes() -> None:
         ),
     ]
     result = replay_verdict(verdict(("evidence-catalog", "evidence-price")), records)
-    assert result["replay_status"] == "VERIFIED"
-    assert result["matches_original"] is True
-    assert result["observed_value"] == 100.0
+    assert result["replay_status"] == "INCONCLUSIVE"
+    assert result["matches_original"] is False
+    assert result["reason_code"] == "POLICY_SNAPSHOT_MISSING"
     assert result["network_calls"] == 0
 
 
@@ -194,8 +231,9 @@ def test_moex_replay_preserves_contradiction() -> None:
         verdict(("evidence-catalog", "evidence-price"), status="CONTRADICTED"),
         records,
     )
-    assert result["replay_status"] == "CONTRADICTED"
-    assert result["matches_original"] is True
+    assert result["replay_status"] == "INCONCLUSIVE"
+    assert result["matches_original"] is False
+    assert result["reason_code"] == "POLICY_SNAPSHOT_MISSING"
 
 
 def test_coingecko_replay_uses_stored_usd_response() -> None:
@@ -209,8 +247,8 @@ def test_coingecko_replay_uses_stored_usd_response() -> None:
         claim,
     )
     result = replay_verdict(verdict(("evidence-coin",)), [record])
-    assert result["replay_status"] == "VERIFIED"
-    assert result["observed_value"] == 67000.0
+    assert result["replay_status"] == "INCONCLUSIVE"
+    assert result["reason_code"] == "POLICY_SNAPSHOT_MISSING"
     assert result["network_calls"] == 0
 
 
@@ -228,7 +266,7 @@ def test_replay_fails_closed_for_unknown_policy_or_bad_digest() -> None:
         verdict(("evidence-catalog",)),
         policy_version="unrecognized-policy",
     )
-    assert replay_verdict(unknown_policy, [record])["replay_status"] == "INCONCLUSIVE"
+    assert replay_verdict(unknown_policy, [record])["reason_code"] == "POLICY_SNAPSHOT_MISSING"
     corrupted = replace(record, raw_sha256="0" * 64)
     assert (
         replay_verdict(verdict(("evidence-catalog",)), [corrupted])["reason_code"]
@@ -246,7 +284,10 @@ def test_multi_source_replay_reduces_persisted_conflicting_observations() -> Non
         ("evidence-source-a", "source-a", 100.0),
         ("evidence-source-b", "source-b", 105.0),
     ):
-        raw = json.dumps({"provider": provider, "price": value}).encode()
+        raw = json.dumps({
+            "provider": provider, "identifier": "SBER", "currency": "USD",
+            "price_type": "SPOT", "price": value,
+        }).encode()
         record = evidence(
             evidence_id,
             provider,
@@ -279,7 +320,11 @@ def test_multi_source_replay_reduces_persisted_conflicting_observations() -> Non
             records[-1], record_hash=compute_record_hash(records[-1])
         )
     original = replace(
-        verdict(("evidence-source-a", "evidence-source-b"), status="AMBIGUOUS"),
+        verdict(
+            ("evidence-source-a", "evidence-source-b"),
+            status="AMBIGUOUS",
+            policy_snapshot=multi_source_policy_snapshot(),
+        ),
         verification_mode="MULTI_SOURCE",
         reason_codes=("SOURCE_VALUES_DIVERGE",),
     )
@@ -307,7 +352,10 @@ def test_multi_source_replay_detects_when_original_conflict_is_not_reproduced() 
         ("evidence-source-a", "source-a"),
         ("evidence-source-b", "source-b"),
     ):
-        raw = f'{{"provider":"{provider}","price":100}}'.encode()
+        raw = json.dumps({
+            "provider": provider, "identifier": "SBER", "currency": "USD",
+            "price_type": "SPOT", "price": 100,
+        }).encode()
         record = evidence(
             evidence_id,
             provider,
@@ -340,7 +388,11 @@ def test_multi_source_replay_detects_when_original_conflict_is_not_reproduced() 
             records[-1], record_hash=compute_record_hash(records[-1])
         )
     original = replace(
-        verdict(("evidence-source-a", "evidence-source-b"), status="AMBIGUOUS"),
+        verdict(
+            ("evidence-source-a", "evidence-source-b"),
+            status="AMBIGUOUS",
+            policy_snapshot=multi_source_policy_snapshot(),
+        ),
         verification_mode="MULTI_SOURCE",
         reason_codes=("SOURCE_VALUES_DIVERGE",),
     )
@@ -396,6 +448,6 @@ def test_multi_source_replay_fails_closed_without_policy_context() -> None:
 
     assert result["replay_status"] == "INCONCLUSIVE"
     assert result["policy_gate_revalidated"] is False
-    assert result["reason_code"] == "POLICY_REPLAY_CONTEXT_MISSING_OR_CONFLICTING"
+    assert result["reason_code"] == "POLICY_SNAPSHOT_MISSING"
     assert result["network_calls"] == 0
 

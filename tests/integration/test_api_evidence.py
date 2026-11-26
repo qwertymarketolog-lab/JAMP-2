@@ -132,6 +132,8 @@ def test_api_server_verifies_claim_persists_raw_evidence_and_reads_it() -> None:
             assert verdict_record["policy_version"] == "provider-defaults-v1"
             assert verdict_record["code_version"] == "integration-test-sha"
             assert verdict_record["canonicalization_version"] == "jamp-json-nfc-v1"
+            assert verdict_record["policy_snapshot"]["schema_version"] == "jamp2-policy-snapshot-v1"
+            assert len(verdict_record["policy_snapshot_sha256"]) == 64
             verdict_id = body["verdict_id"]
             replay = await client.post(f"/v1/verdicts/{verdict_id}/replay")
             assert replay.status_code == 200
