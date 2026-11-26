@@ -15,7 +15,7 @@ from sqlalchemy import text
 
 from jamp2.api.app import create_app
 from jamp2.domain.claim import NormalizedClaim
-from jamp2.evidence.digest import compute_sha256
+from jamp2.evidence.digest import compute_sha256, compute_verdict_hash
 from jamp2.evidence.model import EvidenceRecord
 from jamp2.evidence.multisource import MultiSourcePolicy, SourceSpec
 from jamp2.evidence.policy import SourcePolicyRecord, SourceProvenance
@@ -509,7 +509,7 @@ def test_api_multi_source_conflict_is_persisted_and_replayed_from_postgres() -> 
             } == {row["evidence_id"]: row["record_hash"] for row in evidence_rows}
             verdict_after_replay = await ledger.get_verdict(body["verdict_id"])
             assert verdict_after_replay is not None
-            assert verdict_after_replay.record_hash == verdict_row["record_hash"]
+            assert compute_verdict_hash(verdict_after_replay) == verdict_row["record_hash"]
 
             duplicate = await client.post("/v1/claims/verify", json=payload)
             assert duplicate.status_code == 201

@@ -585,6 +585,14 @@ def replay_verdict(
         return _inconclusive("POLICY_SNAPSHOT_MISSING", verdict)
     if not isinstance(verdict.policy_snapshot, dict):
         return _inconclusive("POLICY_SNAPSHOT_INVALID", verdict)
+    if verdict.policy_snapshot.get("canonicalization_version") != CANONICALIZATION_VERSION:
+        return _inconclusive("POLICY_SNAPSHOT_CANONICALIZATION_UNSUPPORTED", verdict)
+    try:
+        snapshot_digest = compute_policy_snapshot_sha256(verdict.policy_snapshot)
+    except (TypeError, ValueError):
+        return _inconclusive("POLICY_SNAPSHOT_INVALID", verdict)
+    if snapshot_digest != verdict.policy_snapshot_sha256:
+        return _inconclusive("POLICY_SNAPSHOT_DIGEST_MISMATCH", verdict)
     if verdict.policy_snapshot.get("schema_version") != "jamp2-policy-snapshot-v1":
         return _inconclusive("POLICY_SNAPSHOT_VERSION_UNSUPPORTED", verdict)
     if verdict.policy_snapshot.get("policy_evaluator_version") != "jamp-source-policy-v1":
@@ -594,14 +602,6 @@ def replay_verdict(
         "provider_observed_at", "provider_adapter_version", "parser_version",
     ]:
         return _inconclusive("POLICY_SNAPSHOT_REQUIRED_FIELDS_UNSUPPORTED", verdict)
-    if verdict.policy_snapshot.get("canonicalization_version") != CANONICALIZATION_VERSION:
-        return _inconclusive("POLICY_SNAPSHOT_CANONICALIZATION_UNSUPPORTED", verdict)
-    try:
-        snapshot_digest = compute_policy_snapshot_sha256(verdict.policy_snapshot)
-    except (TypeError, ValueError):
-        return _inconclusive("POLICY_SNAPSHOT_INVALID", verdict)
-    if snapshot_digest != verdict.policy_snapshot_sha256:
-        return _inconclusive("POLICY_SNAPSHOT_DIGEST_MISMATCH", verdict)
     if verdict.policy_id != POLICY_ID or verdict.policy_version != POLICY_VERSION:
         return _inconclusive("POLICY_VERSION_UNSUPPORTED", verdict)
     if verdict.canonicalization_version != CANONICALIZATION_VERSION:
