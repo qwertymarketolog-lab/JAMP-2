@@ -636,8 +636,6 @@ def test_replay_rejects_raw_bytes_that_disagree_with_derived_result() -> None:
 
 
 def test_historical_replay_is_unchanged_after_evidence_becomes_stale(monkeypatch: Any) -> None:
-    import jamp2.evidence.replay as replay_module
-
     records = multi_source_records()
     original = multi_source_verdict()
     first = replay_module.replay_verdict(original, records)
@@ -652,4 +650,37 @@ def test_historical_replay_is_unchanged_after_evidence_becomes_stale(monkeypatch
     assert first == second
     assert second["replay_status"] == "AMBIGUOUS"
     assert second["matches_original"] is True
+
+
+
+def test_replay_rejects_missing_provider_observed_at() -> None:
+    records = multi_source_records()
+    records[0] = rehash_evidence(records[0], provider_observed_at=None)
+    result = replay_verdict(multi_source_verdict(), records)
+    assert result["replay_status"] == "INCONCLUSIVE"
+    assert result["reason_code"] == "PROVIDER_OBSERVED_AT_MISSING"
+
+
+def test_replay_rejects_fetch_after_original_decision() -> None:
+    late_fetch = datetime(2026, 11, 20, 0, 0, 11, tzinfo=UTC)
+    records = multi_source_records(fetched_times=(late_fetch, late_fetch))
+    result = replay_verdict(multi_source_verdict(), records)
+    assert result["replay_status"] == "INCONCLUSIVE"
+    assert result["reason_code"] == "FETCHED_AFTER_DECISION"
+
+
+def test_replay_rejects_unknown_policy_version() -> None:
+    original = multi_source_verdict()
+    altered = replace(original, policy_version="jamp2.policy.unknown-v99")
+    result = replay_verdict(altered, multi_source_records())
+    assert result["replay_status"] == "INCONCLUSIVE"
+    assert result["reason_code"] == "POLICY_VERSION_UNSUPPORTED"
+
+
+def test_replay_rejects_unsupported_required_field_contract() -> None:
+    snapshot = multi_source_policy_snapshot()
+    snapshot["required_fields"] = ["raw_body_bytes"]
+    result = replay_verdict(multi_source_verdict(snapshot), multi_source_records())
+    assert result["replay_status"] == "INCONCLUSIVE"
+    assert result["reason_code"] == "POLICY_SNAPSHOT_REQUIRED_FIELDS_UNSUPPORTED"
 

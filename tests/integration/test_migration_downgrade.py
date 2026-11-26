@@ -488,3 +488,52 @@ def test_008_downgrade_preserves_populated_legacy_v1_rows(
     assert asyncio.run(_current_revision(database_url)) == "007_pending_lease"
     assert asyncio.run(_count(database_url, "evidence")) == 1
     assert asyncio.run(_count(database_url, "verdicts")) == 1
+
+
+
+def test_009_downgrade_refuses_policy_snapshot_data_loss(
+    migration_database: tuple[Config, URL],
+) -> None:
+    config, database_url = migration_database
+    command.upgrade(config, "head")
+
+    async def insert_snapshot_verdict() -> None:
+        connection = await asyncpg.connect(
+            **_connect_kwargs(database_url, database_url.database or "")
+        )
+        try:
+            await connection.execute(
+                """
+                INSERT INTO verdicts (
+                    verdict_id, claim_id, status, evidence_ids, policy_id, policy_version,
+                    code_version, canonicalization_version, decided_at_utc, reason_codes,
+                    explanation, parent_hash, record_hash, policy_snapshot,
+                    policy_snapshot_sha256
+                ) VALUES (
+                    $1, $2, $3, $4::jsonb, $5, $6, $7, $8, $9, $10::jsonb,
+                    $11, $12, $13, $14::jsonb, $15
+                )
+                """,
+                "verdict-policy-snapshot",
+                "claim-policy-snapshot",
+                "VERIFIED",
+                '["evidence-1"]',
+                "jamp2.provider-price-comparison",
+                "v1",
+                "test-code-sha",
+                "jamp-json-nfc-v1",
+                datetime(2026, 11, 26, tzinfo=UTC),
+                "[]",
+                "snapshot migration guard",
+                None,
+                "b" * 64,
+                '{"schema_version":"jamp2-policy-snapshot-v1"}',
+                "a" * 64,
+            )
+        finally:
+            await connection.close()
+
+    asyncio.run(insert_snapshot_verdict())
+    with pytest.raises(RuntimeError, match="cannot downgrade 009_verdict_policy_snapshot"):
+        command.downgrade(config, "008_source_metadata")
+    assert asyncio.run(_current_revision(database_url)) == "009_verdict_policy_snapshot"
