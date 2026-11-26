@@ -188,6 +188,19 @@ def _historical_validity_reason(
     required_sources = policy_data.get("required_sources")
     if not isinstance(source_policy, dict) or not isinstance(required_sources, list):
         return "POLICY_SNAPSHOT_INVALID"
+    policy_source_ids = source_policy.get("required_sources")
+    if not isinstance(policy_source_ids, list) or any(
+        not isinstance(item, str) for item in policy_source_ids
+    ):
+        return "POLICY_SNAPSHOT_INVALID"
+    snapshot_source_ids = [
+        item.get("provider_id") for item in required_sources if isinstance(item, dict)
+    ]
+    if (
+        len(snapshot_source_ids) != len(required_sources)
+        or set(snapshot_source_ids) != set(policy_source_ids)
+    ):
+        return "POLICY_SNAPSHOT_INVALID"
     decision_time = verdict.decided_at_utc.astimezone(UTC)
     provider_times: list[datetime] = []
     by_provider: dict[str, list[EvidenceRecord]] = {}
@@ -268,13 +281,17 @@ def _historical_validity_reason(
             provenance = tuple(SourceProvenance(**item) for item in provenance_data)
         except (TypeError, ValueError):
             return "POLICY_SNAPSHOT_INVALID"
+        provenance_ids = {item.provider_id for item in provenance}
         if (
-            len(provenance) != len(source_policy.get("required_sources", []))
+            len(provenance) != len(policy_source_ids)
+            or provenance_ids != set(policy_source_ids)
             or not provenance_is_independent(provenance)
         ):
             return "SOURCE_PROVENANCE_INDEPENDENCE_UNVERIFIED"
     calendar = snapshot.get("market_calendar")
     if not isinstance(calendar, dict):
+        return "POLICY_SNAPSHOT_INVALID"
+    if calendar.get("required") is not source_policy.get("market_calendar_required"):
         return "POLICY_SNAPSHOT_INVALID"
     if calendar.get("required") is True:
         qualification = calendar.get("qualification")
@@ -388,6 +405,14 @@ def _replay_multi_source_conflict(
                 raise ValueError("source outcome metadata is inconsistent")
             source_status = next(iter(source_statuses))
             details = provider_results[0]
+            calendar = policy_snapshot.get("market_calendar")
+            qualifications = calendar.get("qualification") if isinstance(calendar, dict) else None
+            if (
+                not isinstance(qualifications, dict)
+                or source.provider_id not in qualifications
+                or qualifications[source.provider_id] != details.get("market_calendar_valid")
+            ):
+                raise ValueError("market calendar qualification differs from persisted source result")
             if not isinstance(source_status, str):
                 raise ValueError("source status is missing")
             derived = _parse_raw_source_value(

@@ -684,3 +684,28 @@ def test_replay_rejects_unsupported_required_field_contract() -> None:
     assert result["replay_status"] == "INCONCLUSIVE"
     assert result["reason_code"] == "POLICY_SNAPSHOT_REQUIRED_FIELDS_UNSUPPORTED"
 
+
+
+def test_replay_rejects_http_error_status_for_required_raw_evidence() -> None:
+    records = multi_source_records()
+    records[0] = rehash_evidence(records[0], http_status=503)
+    result = replay_verdict(multi_source_verdict(), records)
+    assert result["replay_status"] == "INCONCLUSIVE"
+    assert result["reason_code"] == "SOURCE_HTTP_STATUS_INVALID"
+
+
+def test_replay_rejects_verification_mode_not_bound_by_snapshot() -> None:
+    original = multi_source_verdict()
+    altered = replace(original, verification_mode="SINGLE_SOURCE")
+    result = replay_verdict(altered, multi_source_records())
+    assert result["replay_status"] == "INCONCLUSIVE"
+    assert result["reason_code"] == "POLICY_SNAPSHOT_CONTEXT_MISMATCH"
+
+
+def test_replay_rejects_calendar_state_conflicting_with_source_result() -> None:
+    snapshot = multi_source_policy_snapshot()
+    snapshot["market_calendar"]["qualification"]["source-a"] = True
+    result = replay_verdict(multi_source_verdict(snapshot), multi_source_records())
+    assert result["replay_status"] == "INCONCLUSIVE"
+    assert result["reason_code"] == "POLICY_REPLAY_CONTEXT_INVALID"
+
