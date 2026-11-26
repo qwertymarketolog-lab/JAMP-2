@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timedelta
+from typing import Any
 
 VERDICT_STATUSES = frozenset(
     {"VERIFIED", "CONTRADICTED", "INCONCLUSIVE", "OUT_OF_SCOPE", "AMBIGUOUS"}
@@ -27,6 +28,8 @@ class VerdictRecord:
     explanation: str
     parent_hash: str | None = None
     verification_mode: str | None = None
+    policy_snapshot: dict[str, Any] | None = None
+    policy_snapshot_sha256: str | None = None
 
     def __post_init__(self) -> None:
         for field_name in (
@@ -65,6 +68,15 @@ class VerdictRecord:
             raise ValueError("decided_at_utc must be timezone-aware UTC")
         if self.verification_mode not in {None, "SINGLE_SOURCE", "MULTI_SOURCE"}:
             raise ValueError("verification_mode must be SINGLE_SOURCE, MULTI_SOURCE, or null")
+        if (self.policy_snapshot is None) != (self.policy_snapshot_sha256 is None):
+            raise ValueError("policy_snapshot and policy_snapshot_sha256 must be set together")
+        if self.policy_snapshot is not None and not isinstance(self.policy_snapshot, dict):
+            raise ValueError("policy_snapshot must be an object or null")
+        if self.policy_snapshot_sha256 is not None and (
+            len(self.policy_snapshot_sha256) != 64
+            or any(c not in "0123456789abcdef" for c in self.policy_snapshot_sha256)
+        ):
+            raise ValueError("policy_snapshot_sha256 must be a lowercase SHA-256 digest")
         if self.parent_hash is not None and (
             not isinstance(self.parent_hash, str) or not self.parent_hash
         ):

@@ -48,6 +48,11 @@ def compute_record_hash(record: EvidenceRecord) -> str:
     return compute_sha256(canonicalize(payload))
 
 
+def compute_policy_snapshot_sha256(snapshot: JSONValue) -> str:
+    """Hash the complete canonical immutable policy snapshot representation."""
+    return compute_sha256(canonicalize(snapshot))
+
+
 def compute_verdict_hash(record: VerdictRecord) -> str:
     """Hash every immutable verdict field and its preceding verdict-chain hash."""
     payload: JSONValue = {
@@ -64,4 +69,8 @@ def compute_verdict_hash(record: VerdictRecord) -> str:
         "explanation": record.explanation,
         "parent_hash": record.parent_hash,
     }
+    if record.policy_snapshot is not None:
+        payload["verification_mode"] = record.verification_mode
+        payload["policy_snapshot"] = record.policy_snapshot
+        payload["policy_snapshot_sha256"] = record.policy_snapshot_sha256
     return compute_sha256(canonicalize(payload))

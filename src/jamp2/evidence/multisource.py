@@ -14,6 +14,7 @@ from typing import Any
 from urllib.parse import urlsplit
 
 from jamp2.domain.claim import NormalizedClaim
+from jamp2.evidence.canonicalize import CANONICALIZATION_VERSION
 from jamp2.evidence.conflict import SourceObservation, detect_conflicts
 from jamp2.evidence.digest import compute_record_hash, compute_sha256
 from jamp2.evidence.model import EvidenceRecord, IntegrityViolation
@@ -210,6 +211,42 @@ def _source_policy(claim: NormalizedClaim, policy: MultiSourcePolicy) -> SourceP
             "SINGLE_SOURCE" if len(policy.required_sources) == 1 else "MULTI_SOURCE"
         ),
     )
+
+
+def build_policy_snapshot(
+    claim: NormalizedClaim,
+    policy: MultiSourcePolicy,
+    outcomes: tuple[SourceOutcome, ...],
+) -> dict[str, Any]:
+    """Capture the configured eligibility and comparison parameters immutably."""
+    context = build_policy_replay_context(
+        claim, policy, evaluated_at=datetime(1970, 1, 1, tzinfo=UTC)
+    )
+    policy_data = context["policy"]
+    source_policy_data = policy_data["source_policy"]
+    return {
+        "schema_version": "jamp2-policy-snapshot-v1",
+        "canonicalization_version": CANONICALIZATION_VERSION,
+        "policy_evaluator_version": "jamp-source-policy-v1",
+        "parser_version": "jamp-provider-json-v1",
+        "policy": policy_data,
+        "required_fields": [
+            "raw_body_bytes", "raw_sha256", "body_complete", "fetched_at",
+            "provider_observed_at", "provider_adapter_version", "parser_version",
+        ],
+        "comparison_parameters": {
+            "moex.iss": {"mode": "RELATIVE_DELTA", "threshold": 0.05},
+            "coingecko": {"mode": "RELATIVE_DELTA_PERCENT", "threshold": 10.0},
+            "test-adapter-v1": {"mode": "RELATIVE_DELTA", "threshold": 0.05},
+        },
+        "market_calendar": {
+            "required": source_policy_data["market_calendar_required"],
+            "qualification": {
+                outcome.source.provider_id: outcome.details.get("market_calendar_valid")
+                for outcome in outcomes
+            },
+        },
+    }
 
 
 def build_policy_replay_context(

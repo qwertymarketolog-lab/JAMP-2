@@ -109,6 +109,8 @@ class VerdictRow(Base):
     reason_codes: Mapped[list[str]] = mapped_column(JSONB)
     explanation: Mapped[str] = mapped_column(Text)
     verification_mode: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    policy_snapshot: Mapped[JSONValue | None] = mapped_column(JSONB, nullable=True)
+    policy_snapshot_sha256: Mapped[str | None] = mapped_column(String(64), nullable=True)
     parent_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
     record_hash: Mapped[str] = mapped_column(String(64))
 
@@ -180,6 +182,8 @@ def _to_verdict(row: VerdictRow) -> VerdictRecord:
         explanation=row.explanation,
         parent_hash=row.parent_hash,
         verification_mode=row.verification_mode,
+        policy_snapshot=row.policy_snapshot,
+        policy_snapshot_sha256=row.policy_snapshot_sha256,
     )
 
 
@@ -367,6 +371,8 @@ class PostgresLedger:
                         reason_codes=list(linked_record.reason_codes),
                         explanation=linked_record.explanation,
                         verification_mode=linked_record.verification_mode,
+                        policy_snapshot=linked_record.policy_snapshot,
+                        policy_snapshot_sha256=linked_record.policy_snapshot_sha256,
                         parent_hash=linked_record.parent_hash,
                         record_hash=record_hash,
                     )

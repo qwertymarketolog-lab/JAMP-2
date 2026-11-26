@@ -17,13 +17,18 @@ from fastapi.responses import JSONResponse
 from jamp2.api.schemas import ClaimVerifyRequest
 from jamp2.domain.claim import NormalizedClaim
 from jamp2.evidence.canonicalize import CANONICALIZATION_VERSION, canonicalize
-from jamp2.evidence.digest import compute_record_hash, compute_sha256
+from jamp2.evidence.digest import (
+    compute_policy_snapshot_sha256,
+    compute_record_hash,
+    compute_sha256,
+)
 from jamp2.evidence.model import EvidenceRecord, JSONValue
 from jamp2.evidence.multisource import (
     MultiSourcePolicy,
     SourceSpec,
     arbitrate_from_evidence,
     build_policy_replay_context,
+    build_policy_snapshot,
     fetch_provider_results,
 )
 from jamp2.evidence.replay import replay_verdict
@@ -393,11 +398,13 @@ def build_router(
             "expected_value": claim.expected_value,
             "unit": claim.unit,
         }
-        policy_evaluated_at = datetime.now(UTC)
-        replay_context = (
-            build_policy_replay_context(claim, policy, evaluated_at=policy_evaluated_at)
-            if len(policy.required_sources) > 1
-            else None
+        decision_time = datetime.now(UTC)
+        replay_context = build_policy_replay_context(
+            claim, policy, evaluated_at=decision_time
+        )
+        policy_snapshot = build_policy_snapshot(claim, policy, outcomes)
+        policy_snapshot_sha256 = compute_policy_snapshot_sha256(
+            cast(JSONValue, policy_snapshot)
         )
         records: list[EvidenceRecord] = []
         try:
@@ -469,7 +476,7 @@ def build_router(
         try:
             arbitration = arbitrate_from_evidence(
                 claim, policy, outcomes, tuple(records), expected_claim_id=claim_id,
-                now=policy_evaluated_at,
+                now=decision_time,
             )
         except IntegrityViolation as exc:
             failure_response = await mark_failed()
@@ -494,9 +501,11 @@ def build_router(
             policy_version=policy.version,
             code_version=immutable_code_version,
             canonicalization_version=CANONICALIZATION_VERSION,
-            decided_at_utc=datetime.now(UTC),
+            decided_at_utc=decision_time,
             reason_codes=arbitration.reason_codes,
             verification_mode=arbitration.verification_mode,
+            policy_snapshot=policy_snapshot,
+            policy_snapshot_sha256=policy_snapshot_sha256,
             explanation=(
                 f"Required-source arbitration returned {arbitration.verdict_status}; "
                 f"{len(arbitration.outcomes)} required source outcome(s) are linked "
@@ -588,6 +597,8 @@ def build_router(
             "decided_at_utc": record.decided_at_utc.isoformat(),
             "reason_codes": list(record.reason_codes),
             "verification_mode": record.verification_mode,
+            "policy_snapshot": record.policy_snapshot,
+            "policy_snapshot_sha256": record.policy_snapshot_sha256,
             "explanation": record.explanation,
             "parent_hash": record.parent_hash,
         }
