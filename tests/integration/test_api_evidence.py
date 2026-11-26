@@ -465,7 +465,10 @@ def test_api_multi_source_conflict_is_persisted_and_replayed_from_postgres() -> 
             }
             assert observed_values == {100.0, 105.0}
             replay_contexts = [row["parsed_value"]["replay_context"] for row in evidence_rows]
-            assert all(context["schema_version"] == "jamp2-policy-gate-replay-v1" for context in replay_contexts)
+            assert all(
+                context["schema_version"] == "jamp2-policy-gate-replay-v1"
+                for context in replay_contexts
+            )
             assert replay_contexts[0] == replay_contexts[1]
             assert replay_contexts[0]["policy"]["source_policy"]["provenance"]
             assert all(row["record_hash"] for row in evidence_rows)
