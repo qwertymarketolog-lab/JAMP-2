@@ -12,7 +12,7 @@ from typing import Any
 from jamp2.domain.claim import NormalizedClaim
 from jamp2.evidence.canonicalize import CANONICALIZATION_VERSION
 from jamp2.evidence.conflict import SourceObservation
-from jamp2.evidence.digest import compute_sha256
+from jamp2.evidence.digest import compute_policy_snapshot_sha256, compute_record_hash, compute_sha256
 from jamp2.evidence.model import EvidenceRecord, IntegrityViolation
 from jamp2.evidence.multisource import (
     MultiSourcePolicy,
@@ -34,7 +34,7 @@ def _inconclusive(reason: str, verdict: VerdictRecord) -> dict[str, object]:
         "claim_id": verdict.claim_id,
         "original_status": verdict.status,
         "replay_status": "INCONCLUSIVE",
-        "matches_original": verdict.status == "INCONCLUSIVE",
+        "matches_original": False,
         "reason_code": reason,
         "policy_id": verdict.policy_id,
         "policy_version": verdict.policy_version,
@@ -166,16 +166,179 @@ def _replay_coingecko(
     return "OUT_OF_SCOPE", "COINGECKO_COIN_OR_PRICE_NOT_FOUND", None
 
 
+def _parse_raw_source_value(
+    source: SourceSpec,
+    records: Sequence[EvidenceRecord],
+    claim: dict[str, Any],
+    source_policy: dict[str, Any],
+) -> tuple[float, tuple[str, ...]] | None:
+    """Derive the provider value and identity from exact persisted response bytes."""
+    identifier = claim.get("subject_identifier")
+    if not isinstance(identifier, str) or not identifier:
+        return None
+    if source.adapter_version == "moex-iss-adapter-v1":
+        catalog_seen = False
+        identity_seen = False
+        observed: float | None = None
+        for record in records:
+            try:
+                payload = json.loads(record.raw_body_bytes.decode("utf-8"))
+            except (UnicodeDecodeError, json.JSONDecodeError):
+                return None
+            if not isinstance(payload, dict):
+                return None
+            securities = _table_rows(payload, "securities")
+            if securities is not None:
+                catalog_seen = True
+                identity_seen = any(
+                    isinstance(row.get("secid"), str)
+                    and row["secid"].upper() == identifier.upper()
+                    for row in securities
+                )
+            marketdata = _table_rows(payload, "marketdata")
+            if marketdata is not None:
+                for row in marketdata:
+                    if (
+                        isinstance(row.get("SECID"), str)
+                        and row["SECID"].upper() == identifier.upper()
+                    ):
+                        value = _finite_positive(row.get("LAST"))
+                        if value is not None:
+                            observed = value
+        if catalog_seen and identity_seen and observed is not None:
+            return observed, (identifier,)
+        return None
+    if source.adapter_version == "coingecko-adapter-v1":
+        for record in records:
+            try:
+                payload = json.loads(record.raw_body_bytes.decode("utf-8"))
+            except (UnicodeDecodeError, json.JSONDecodeError):
+                return None
+            if not isinstance(payload, dict):
+                return None
+            coin = payload.get(identifier)
+            if isinstance(coin, dict):
+                observed = _finite_positive(coin.get("usd"))
+                if observed is not None:
+                    return observed, (identifier,)
+        return None
+    if source.adapter_version == "test-adapter-v1":
+        for record in records:
+            try:
+                payload = json.loads(record.raw_body_bytes.decode("utf-8"))
+            except (UnicodeDecodeError, json.JSONDecodeError):
+                return None
+            if not isinstance(payload, dict):
+                return None
+            if (
+                payload.get("provider") != source.provider_id
+                or payload.get("identifier") != identifier
+                or payload.get("currency") != claim.get("unit")
+                or payload.get("price_type") != source_policy.get("price_type")
+            ):
+                return None
+            observed = _finite_positive(payload.get("price"))
+            if observed is not None:
+                return observed, (identifier,)
+        return None
+    return None
+
+
+def _historical_validity_reason(
+    verdict: VerdictRecord,
+    records: Sequence[EvidenceRecord],
+    snapshot: dict[str, Any],
+) -> str | None:
+    """Validate all source timestamps against the immutable original decision time."""
+    policy_data = snapshot.get("policy")
+    if not isinstance(policy_data, dict):
+        return "POLICY_SNAPSHOT_INVALID"
+    source_policy = policy_data.get("source_policy")
+    required_sources = policy_data.get("required_sources")
+    if not isinstance(source_policy, dict) or not isinstance(required_sources, list):
+        return "POLICY_SNAPSHOT_INVALID"
+    decision_time = verdict.decided_at_utc.astimezone(UTC)
+    provider_times: list[datetime] = []
+    by_provider: dict[str, list[EvidenceRecord]] = {}
+    for record in records:
+        by_provider.setdefault(record.provider, []).append(record)
+    max_age_by_source = source_policy.get("max_age_by_source", {})
+    default_max_age = source_policy.get("max_age_seconds")
+    if not isinstance(max_age_by_source, dict) or isinstance(default_max_age, bool) or not isinstance(default_max_age, int):
+        return "POLICY_SNAPSHOT_INVALID"
+    for source in required_sources:
+        if not isinstance(source, dict):
+            return "POLICY_SNAPSHOT_INVALID"
+        provider_id = source.get("provider_id")
+        adapter_version = source.get("adapter_version")
+        if not isinstance(provider_id, str) or not isinstance(adapter_version, str):
+            return "POLICY_SNAPSHOT_INVALID"
+        source_records = by_provider.get(provider_id, [])
+        if not source_records:
+            return "REQUIRED_SOURCE_EVIDENCE_MISSING"
+        if any(
+            record.provider_adapter_version != adapter_version
+            or record.parser_version != snapshot.get("parser_version")
+            or record.canonicalization_version != snapshot.get("canonicalization_version")
+            or record.hash_schema_version != "v2"
+            for record in source_records
+        ):
+            return "EVIDENCE_INTERPRETATION_VERSION_UNSUPPORTED"
+        if any(not record.body_complete or not record.raw_body_bytes for record in source_records):
+            return "SOURCE_BODY_INCOMPLETE"
+        for record in source_records:
+            observed_at = record.provider_observed_at
+            fetched_at = record.fetched_at
+            if observed_at is None:
+                return "PROVIDER_OBSERVED_AT_MISSING"
+            if fetched_at is None:
+                return "FETCHED_AT_MISSING"
+            if observed_at.tzinfo is None or observed_at.utcoffset() is None:
+                return "PROVIDER_OBSERVED_AT_INVALID"
+            if fetched_at.tzinfo is None or fetched_at.utcoffset() is None:
+                return "FETCHED_AT_INVALID"
+            observed_utc = observed_at.astimezone(UTC)
+            fetched_utc = fetched_at.astimezone(UTC)
+            if observed_utc > fetched_utc:
+                return "PROVIDER_OBSERVED_AFTER_FETCH"
+            if fetched_utc > decision_time:
+                return "FETCHED_AFTER_DECISION"
+            if observed_utc > decision_time:
+                return "PROVIDER_OBSERVED_AFTER_DECISION"
+            age_limit = max_age_by_source.get(provider_id, default_max_age)
+            if isinstance(age_limit, bool) or not isinstance(age_limit, int) or age_limit <= 0:
+                return "POLICY_SNAPSHOT_INVALID"
+            if (decision_time - observed_utc).total_seconds() > age_limit:
+                return "SOURCE_AGE_EXCEEDED_AT_DECISION"
+        provider_times.append(source_records[-1].provider_observed_at.astimezone(UTC))
+    if len(provider_times) > 1:
+        max_skew = source_policy.get("max_time_skew_seconds")
+        if isinstance(max_skew, bool) or not isinstance(max_skew, int) or max_skew < 0:
+            return "POLICY_SNAPSHOT_INVALID"
+        if (max(provider_times) - min(provider_times)).total_seconds() > max_skew:
+            return "SOURCE_TIME_SKEW_EXCEEDED"
+    calendar = snapshot.get("market_calendar")
+    if not isinstance(calendar, dict):
+        return "POLICY_SNAPSHOT_INVALID"
+    if calendar.get("required") is True:
+        qualification = calendar.get("qualification")
+        if not isinstance(qualification, dict) or any(
+            qualification.get(source.get("provider_id")) is not True
+            for source in required_sources if isinstance(source, dict)
+        ):
+            return "SOURCE_MARKET_CALENDAR_UNCONFIRMED"
+    return None
+
+
 def _replay_multi_source_conflict(
     verdict: VerdictRecord,
     records: Sequence[EvidenceRecord],
     claim_snapshot: dict[str, Any],
+    policy_snapshot: dict[str, Any],
 ) -> tuple[str, str, dict[str, Any]]:
     """Re-run the persisted Policy Gate and reducer without provider/network access."""
-    if verdict.verification_mode != "MULTI_SOURCE":
-        return "INCONCLUSIVE", "MULTI_SOURCE_MODE_MISSING", {}
-    if len(records) < 2:
-        return "INCONCLUSIVE", "MULTI_SOURCE_EVIDENCE_SHAPE_UNSUPPORTED", {}
+    if verdict.verification_mode not in {"SINGLE_SOURCE", "MULTI_SOURCE"}:
+        return "INCONCLUSIVE", "VERIFICATION_MODE_UNSUPPORTED", {}
 
     parsed_records: list[dict[str, Any]] = []
     for record in records:
@@ -193,15 +356,19 @@ def _replay_multi_source_conflict(
         return "INCONCLUSIVE", "POLICY_REPLAY_CONTEXT_MISSING", {}
     if context.get("schema_version") != "jamp2-policy-gate-replay-v1":
         return "INCONCLUSIVE", "POLICY_REPLAY_CONTEXT_VERSION_UNSUPPORTED", {}
+    if context.get("policy") != policy_snapshot.get("policy"):
+        return "INCONCLUSIVE", "POLICY_SNAPSHOT_CONTEXT_MISMATCH", {}
 
     try:
-        evaluation_time = datetime.fromisoformat(
+        evaluation_time = verdict.decided_at_utc.astimezone(UTC)
+        stored_evaluation_time = datetime.fromisoformat(
             str(context["evaluation_time_utc"]).replace("Z", "+00:00")
         )
-        if evaluation_time.tzinfo is None or evaluation_time.utcoffset() is None:
-            raise ValueError("evaluation timestamp must be timezone-aware")
-        evaluation_time = evaluation_time.astimezone(UTC)
-        policy_data = context["policy"]
+        if stored_evaluation_time.tzinfo is None or stored_evaluation_time.utcoffset() is None:
+            raise ValueError("stored evaluation timestamp must be timezone-aware")
+        if stored_evaluation_time.astimezone(UTC) != evaluation_time:
+            raise ValueError("stored evaluation timestamp differs from verdict decision time")
+        policy_data = policy_snapshot["policy"]
         source_policy_data = policy_data["source_policy"]
         provenance_data = source_policy_data["provenance"]
         required_sources_data = policy_data["required_sources"]
@@ -267,6 +434,43 @@ def _replay_multi_source_conflict(
             details = provider_results[0]
             if not isinstance(source_status, str):
                 raise ValueError("source status is missing")
+            derived = _parse_raw_source_value(source, source_records, claim_snapshot, source_policy_data)
+            if source_status in {"E4_VERIFIED", "E4_CONTRADICTED"}:
+                if derived is None:
+                    raise ValueError("raw provider bytes cannot be interpreted by the bound adapter")
+                expected_value = _finite_positive(claim_snapshot.get("expected_value"))
+                if expected_value is None:
+                    raise ValueError("claim expected value is invalid")
+                raw_value, raw_identifiers = derived
+                recorded_value = _finite_positive(details.get("observed_last", details.get("observed_value")))
+                if recorded_value is None or recorded_value != raw_value:
+                    raise ValueError("derived provider value differs from persisted raw bytes")
+                if tuple(details.get("source_identifiers", ())) != raw_identifiers:
+                    raise ValueError("provider identity differs from persisted raw bytes")
+                if details.get("quote_currency") != source_policy_data.get("quote_currency"):
+                    raise ValueError("provider quote currency differs from policy")
+                if details.get("price_type") != source_policy_data.get("price_type"):
+                    raise ValueError("provider price type differs from policy")
+                comparison = policy_snapshot.get("comparison_parameters")
+                if not isinstance(comparison, dict):
+                    raise ValueError("comparison parameters are missing")
+                parameters = comparison.get(source.adapter_version)
+                if not isinstance(parameters, dict):
+                    parameters = comparison.get(source.provider_id)
+                if not isinstance(parameters, dict):
+                    raise ValueError("provider comparison parameters are unsupported")
+                threshold = parameters.get("threshold")
+                mode = parameters.get("mode")
+                if isinstance(threshold, bool) or not isinstance(threshold, (int, float)) or threshold < 0:
+                    raise ValueError("provider comparison threshold is invalid")
+                delta = abs(expected_value - raw_value) / raw_value
+                if mode == "RELATIVE_DELTA_PERCENT":
+                    delta *= 100.0
+                elif mode != "RELATIVE_DELTA":
+                    raise ValueError("provider comparison mode is unsupported")
+                calculated_status = "E4_CONTRADICTED" if delta > float(threshold) else "E4_VERIFIED"
+                if calculated_status != source_status:
+                    raise ValueError("provider status differs from raw-byte recalculation")
             captures: list[dict[str, Any]] = []
             for record in source_records:
                 if record.verdict_status == "SOURCE_FAILURE":
@@ -310,7 +514,7 @@ def _replay_multi_source_conflict(
         arbitration = arbitrate_from_evidence(
             claim, policy, tuple(outcomes), records,
             expected_claim_id=verdict.claim_id,
-            now=evaluation_time
+            now=verdict.decided_at_utc,
         )
     except (IntegrityViolation, KeyError, TypeError, ValueError, OverflowError):
         return "INCONCLUSIVE", "POLICY_REPLAY_CONTEXT_INVALID", {}
@@ -337,6 +541,20 @@ def replay_verdict(
     records: Sequence[EvidenceRecord],
 ) -> dict[str, object]:
     """Recalculate a recorded verdict from exact stored bytes without network access."""
+    if verdict.policy_snapshot is None or verdict.policy_snapshot_sha256 is None:
+        return _inconclusive("POLICY_SNAPSHOT_MISSING", verdict)
+    if not isinstance(verdict.policy_snapshot, dict):
+        return _inconclusive("POLICY_SNAPSHOT_INVALID", verdict)
+    if verdict.policy_snapshot.get("schema_version") != "jamp2-policy-snapshot-v1":
+        return _inconclusive("POLICY_SNAPSHOT_VERSION_UNSUPPORTED", verdict)
+    if verdict.policy_snapshot.get("canonicalization_version") != CANONICALIZATION_VERSION:
+        return _inconclusive("POLICY_SNAPSHOT_CANONICALIZATION_UNSUPPORTED", verdict)
+    try:
+        snapshot_digest = compute_policy_snapshot_sha256(verdict.policy_snapshot)
+    except (TypeError, ValueError):
+        return _inconclusive("POLICY_SNAPSHOT_INVALID", verdict)
+    if snapshot_digest != verdict.policy_snapshot_sha256:
+        return _inconclusive("POLICY_SNAPSHOT_DIGEST_MISMATCH", verdict)
     if verdict.policy_id != POLICY_ID or verdict.policy_version != POLICY_VERSION:
         return _inconclusive("POLICY_VERSION_UNSUPPORTED", verdict)
     if verdict.canonicalization_version != CANONICALIZATION_VERSION:
@@ -347,19 +565,25 @@ def replay_verdict(
         record.claim_id != verdict.claim_id
         or record.canonicalization_version != verdict.canonicalization_version
         or record.parser_version != PARSER_VERSION
-        or (verdict.verification_mode != "MULTI_SOURCE" and not record.body_complete)
+        or not record.record_hash
+        or compute_record_hash(record) != record.record_hash
         or compute_sha256(record.raw_body_bytes) != record.raw_sha256
         for record in records
     ):
         return _inconclusive("EVIDENCE_INTEGRITY_OR_VERSION_MISMATCH", verdict)
+    historical_reason = _historical_validity_reason(verdict, records, verdict.policy_snapshot)
+    if historical_reason is not None:
+        return _inconclusive(historical_reason, verdict)
     claim = _claim_snapshot(records)
     if claim is None or claim.get("predicate") != "price":
         return _inconclusive("CLAIM_SNAPSHOT_INVALID", verdict)
 
     providers = {record.provider for record in records}
     adapter_versions = {record.provider_adapter_version for record in records}
-    if verdict.verification_mode == "MULTI_SOURCE":
-        status, reason, reducer = _replay_multi_source_conflict(verdict, records, claim)
+    if verdict.verification_mode in {"SINGLE_SOURCE", "MULTI_SOURCE"}:
+        status, reason, reducer = _replay_multi_source_conflict(
+            verdict, records, claim, verdict.policy_snapshot
+        )
         return {
             "verdict_id": verdict.verdict_id,
             "claim_id": verdict.claim_id,
@@ -367,7 +591,8 @@ def replay_verdict(
             "replay_status": status,
             "reason_codes_match": reducer.get("reason_codes") == list(verdict.reason_codes),
             "matches_original": (
-                status == verdict.status
+                status != "INCONCLUSIVE"
+                and status == verdict.status
                 and reducer.get("reason_codes") == list(verdict.reason_codes)
             ),
             "reason_code": reason,
@@ -401,7 +626,7 @@ def replay_verdict(
         "claim_id": verdict.claim_id,
         "original_status": verdict.status,
         "replay_status": status,
-        "matches_original": status == verdict.status,
+        "matches_original": status != "INCONCLUSIVE" and status == verdict.status,
         "reason_code": reason,
         "observed_value": observed,
         "policy_id": verdict.policy_id,
