@@ -23,6 +23,7 @@ from jamp2.evidence.multisource import (
     MultiSourcePolicy,
     SourceSpec,
     arbitrate_from_evidence,
+    build_policy_replay_context,
     fetch_provider_results,
 )
 from jamp2.evidence.replay import replay_verdict
@@ -387,6 +388,12 @@ def build_router(
             "expected_value": claim.expected_value,
             "unit": claim.unit,
         }
+        policy_evaluated_at = datetime.now(UTC)
+        replay_context = (
+            build_policy_replay_context(claim, policy, evaluated_at=policy_evaluated_at)
+            if len(policy.required_sources) > 1
+            else None
+        )
         records: list[EvidenceRecord] = []
         try:
             for outcome in outcomes:
@@ -396,6 +403,7 @@ def build_router(
                     "source_details": outcome.details,
                     "provider_result": outcome.details,
                     "trade_date": outcome.details.get("trade_date"),
+                    **({"replay_context": replay_context} if replay_context is not None else {}),
                 }
                 if outcome.raw_evidence:
                     for observation in outcome.raw_evidence:
@@ -455,7 +463,8 @@ def build_router(
 
         try:
             arbitration = arbitrate_from_evidence(
-                claim, policy, outcomes, tuple(records), expected_claim_id=claim_id
+                claim, policy, outcomes, tuple(records), expected_claim_id=claim_id,
+                now=policy_evaluated_at,
             )
         except IntegrityViolation as exc:
             failure_response = await mark_failed()

@@ -212,6 +212,66 @@ def _source_policy(claim: NormalizedClaim, policy: MultiSourcePolicy) -> SourceP
     )
 
 
+def build_policy_replay_context(
+    claim: NormalizedClaim,
+    policy: MultiSourcePolicy,
+    *,
+    evaluated_at: datetime,
+) -> dict[str, Any]:
+    """Return the exact immutable policy inputs needed for deterministic replay."""
+    if evaluated_at.tzinfo is None or evaluated_at.utcoffset() is None:
+        raise ValueError("evaluated_at must be timezone-aware")
+    source_policy = _source_policy(claim, policy)
+    return {
+        "schema_version": "jamp2-policy-gate-replay-v1",
+        "evaluation_time_utc": evaluated_at.astimezone(UTC).isoformat(),
+        "policy": {
+            "policy_id": policy.policy_id,
+            "version": policy.version,
+            "timeout_seconds": policy.timeout_seconds,
+            "comparison_mode": policy.comparison_mode,
+            "required_sources": [
+                {
+                    "provider_key": source.provider_key,
+                    "provider_id": source.provider_id,
+                    "allowed_host": source.allowed_host,
+                    "adapter_version": source.adapter_version,
+                }
+                for source in policy.required_sources
+            ],
+            "source_policy": {
+                "policy_id": source_policy.policy_id,
+                "version": source_policy.version,
+                "asset_class": source_policy.asset_class,
+                "required_identifiers": list(source_policy.required_identifiers),
+                "market_calendar_required": source_policy.market_calendar_required,
+                "quote_currency": source_policy.quote_currency,
+                "price_type": source_policy.price_type,
+                "required_sources": list(source_policy.required_sources),
+                "independence_group": source_policy.independence_group,
+                "max_age_seconds": source_policy.max_age_seconds,
+                "max_time_skew_seconds": source_policy.max_time_skew_seconds,
+                "comparison_mode": source_policy.comparison_mode,
+                "tolerance": source_policy.tolerance,
+                "timeout_seconds": source_policy.timeout_seconds,
+                "verification_mode": source_policy.verification_mode,
+                "provenance": [
+                    {
+                        "provider_id": item.provider_id,
+                        "upstream_entity": item.upstream_entity,
+                        "aggregation_methodology": item.aggregation_methodology,
+                        "transport_failure_domain": item.transport_failure_domain,
+                        "calculation_failure_domain": item.calculation_failure_domain,
+                        "independence_status": item.independence_status,
+                    }
+                    for item in source_policy.provenance
+                ],
+                "max_age_by_source": dict(source_policy.max_age_by_source),
+            },
+        },
+    }
+
+
 def _parse_capture_time(value: object) -> datetime | None:
     if isinstance(value, datetime):
         parsed = value
@@ -382,6 +442,7 @@ def arbitrate_from_evidence(
     evidence_records: Sequence[EvidenceRecord],
     *,
     expected_claim_id: str,
+    now: datetime | None = None,
 ) -> ArbitrationResult:
     """Apply policy only to provider outcomes proven against persisted ledger records."""
     expected_ids = tuple(source.provider_id for source in policy.required_sources)
@@ -435,7 +496,7 @@ def arbitrate_from_evidence(
         )
 
     gate = evaluate_source_policy(
-        source_policy, tuple(policy_inputs), now=datetime.now(UTC)
+        source_policy, tuple(policy_inputs), now=now or datetime.now(UTC)
     )
     eligibility = {item.provider_id: item for item in gate.observations}
     annotated = tuple(
