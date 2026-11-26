@@ -35,6 +35,12 @@ POLICY_ID = "jamp2.provider-price-comparison"
 POLICY_VERSION = "provider-defaults-v1"
 PARSER_VERSION = "jamp-provider-json-v1"
 
+SUPPORTED_ADAPTER_VERSIONS = frozenset({
+    "moex-iss-adapter-v1",
+    "coingecko-adapter-v1",
+    "test-adapter-v1",
+})
+
 
 def _inconclusive(reason: str, verdict: VerdictRecord) -> dict[str, object]:
     return {
@@ -134,7 +140,8 @@ def _parse_raw_source_value(
                         and row["SECID"].upper() == identifier.upper()
                     ):
                         value = _finite_positive(row.get("LAST"))
-                        if value is not None:
+                        if value is not None and observed is None:
+                            # MOEX adapter selects candidates[0]; preserve first valid row.
                             observed = value
         if catalog_seen and identity_seen and observed is not None:
             return observed, (identifier,)
@@ -230,6 +237,8 @@ def _historical_validity_reason(
         adapter_version = source.get("adapter_version")
         if not isinstance(provider_id, str) or not isinstance(adapter_version, str):
             return "POLICY_SNAPSHOT_INVALID"
+        if adapter_version not in SUPPORTED_ADAPTER_VERSIONS:
+            return "EVIDENCE_INTERPRETATION_VERSION_UNSUPPORTED"
         source_records = by_provider.get(provider_id, [])
         if not source_records:
             return "REQUIRED_SOURCE_EVIDENCE_MISSING"
