@@ -22,7 +22,7 @@ from typing import Any
 from jamp2.domain.claim import Claim as Jamp2Claim
 from jamp2.domain.claim import NormalizedClaim
 from jamp2.providers.base import ProviderResult
-from jamp2.providers.sanitization import sanitize_text, sanitize_url
+from jamp2.providers.sanitization import sanitize_text, sanitize_url, sanitize_value
 
 MOEX_ISS_BASE = "https://iss.moex.com/iss"
 E4_VERIFIED = "E4_VERIFIED"
@@ -131,14 +131,14 @@ def _get_json(
         if is_timeout:
             logger.error(
                 "MOEX timeout (URLError): url=%s, timeout=%.1fs, phase=%s, reason=%r",
-                url, timeout, phase, exc.reason,
+                sanitize_url(url), timeout, phase, sanitize_text(repr(exc.reason)),
             )
         raise
     except TimeoutError:
         # Response-read timeouts may propagate directly as TimeoutError.
         logger.error(
             "MOEX timeout (direct): url=%s, timeout=%.1fs, phase=%s",
-            url, timeout, phase,
+            sanitize_url(url), timeout, phase,
         )
         raise
     capture = None

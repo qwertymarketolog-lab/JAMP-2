@@ -246,8 +246,8 @@ def _make_real_peer_chain(tmp_path: Path) -> tuple[list[dict[str, Any]], str]:
     leaf_pem = tmp_path / "leaf.pem"
     extensions = tmp_path / "leaf.ext"
     extensions.write_text(
-        "basicConstraints=critical,CA:FALSE\\n"
-        "subjectAltName=DNS:iss.moex.test\\n",
+        "basicConstraints=critical,CA:FALSE\n"
+        "subjectAltName=DNS:iss.moex.test\n",
         encoding="ascii",
     )
     subprocess.run(
