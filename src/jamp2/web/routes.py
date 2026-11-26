@@ -4,7 +4,6 @@ from __future__ import annotations
 import base64
 import hashlib
 import hmac
-import json
 import secrets
 import uuid
 from pathlib import Path
@@ -71,15 +70,18 @@ def claim_snapshot(records: list[EvidenceRecord]) -> dict[str, Any]:
 
 
 def raw_body_text(record: EvidenceRecord) -> str:
+    """Return the exact decoded bytes without JSON re-serialization.
+
+    The Dashboard must display the same bytes whose SHA-256 is shown as the
+    integrity digest. Re-parsing and re-serializing JSON would silently drop
+    duplicate keys, reorder fields, change whitespace, and alter number
+    formatting, producing a mismatch between what the user sees and what the
+    hash verifies.
+    """
     try:
-        decoded = record.raw_body_bytes.decode("utf-8")
+        return record.raw_body_bytes.decode("utf-8")
     except UnicodeDecodeError:
         return "Base64: " + base64.b64encode(record.raw_body_bytes).decode("ascii")
-    try:
-        value = json.loads(decoded)
-    except json.JSONDecodeError:
-        return decoded
-    return json.dumps(value, ensure_ascii=False, indent=2, sort_keys=True)
 
 
 def build_dashboard_router(

@@ -19,6 +19,7 @@ from jamp2.evidence.digest import compute_record_hash, compute_sha256
 from jamp2.evidence.model import EvidenceRecord
 from jamp2.evidence.verdict import VerdictRecord
 from jamp2.providers.base import ProviderResult
+from jamp2.web.routes import raw_body_text
 
 
 class DashboardLedger:
@@ -62,6 +63,19 @@ def seeded_records() -> tuple[EvidenceRecord, VerdictRecord]:
     return evidence, verdict
 
 
+def _evidence_with_raw(raw: bytes, *, evidence_id: str = "raw-test-evidence") -> EvidenceRecord:
+    return EvidenceRecord(
+        evidence_id=evidence_id, claim_id="raw-test-claim",
+        provider="test", url="https://test.example/e",
+        http_status=200, raw_body_bytes=raw,
+        raw_sha256=hashlib.sha256(raw).hexdigest(),
+        captured_at_utc=datetime(2026, 11, 26, tzinfo=UTC),
+        parsed_value={}, verdict_status="SOURCE_OBSERVATION_CAPTURED",
+        parent_hash=None, body_complete=True,
+        provider_adapter_version="test-v1", parser_version="test-v1",
+    )
+
+
 def test_dashboard_fails_closed_without_password_configuration() -> None:
     async def run() -> None:
         evidence, verdict = seeded_records()
@@ -93,8 +107,8 @@ def test_dashboard_renders_home_verdict_evidence_and_static_assets() -> None:
         assert "COINGECKO_PRICE_CONTRADICTED" in verdict_page.text
         assert evidence_page.status_code == 200
         assert "Byte integrity confirmed" in evidence_page.text
-        assert "integrity ≠ truth" in evidence_page.text
-        assert json.dumps({"bitcoin": {"usd": 60974}}, indent=2) in unescape(evidence_page.text)
+        assert "integrity \u2260 truth" in evidence_page.text
+        assert '{"bitcoin":{"usd":60974}}' in unescape(evidence_page.text)
         assert static.status_code == 200 and "status-ambiguous" in static.text
     asyncio.run(run())
 
@@ -276,3 +290,40 @@ def test_dashboard_claim_and_replay_use_server_side_api_key() -> None:
         assert replay.json()["network_calls"] == 0
 
     asyncio.run(run())
+
+
+def test_raw_body_text_preserves_duplicate_json_keys() -> None:
+    """Duplicate JSON keys must be visible exactly as stored, not deduplicated."""
+    raw = b'{"price":1,"price":2}'
+    evidence = _evidence_with_raw(raw)
+    assert raw_body_text(evidence) == '{"price":1,"price":2}'
+
+
+def test_raw_body_text_preserves_original_formatting_and_order() -> None:
+    """Whitespace, key order, and number format must match stored bytes."""
+    raw = b'{"b":1,"a":2, "x" : 3.0}'
+    evidence = _evidence_with_raw(raw)
+    assert raw_body_text(evidence) == '{"b":1,"a":2, "x" : 3.0}'
+
+
+def test_raw_body_text_returns_base64_for_invalid_utf8() -> None:
+    """Non-UTF-8 bytes must be displayed as Base64, not decoded."""
+    raw = b'\xff\xfe\x00invalid'
+    evidence = _evidence_with_raw(raw)
+    result = raw_body_text(evidence)
+    assert result.startswith("Base64: ")
+    assert base64.b64encode(raw).decode("ascii") in result
+
+
+def test_raw_body_text_returns_plain_text_for_non_json() -> None:
+    """Non-JSON UTF-8 text must be returned as-is."""
+    raw = b'plain text, not json'
+    evidence = _evidence_with_raw(raw)
+    assert raw_body_text(evidence) == 'plain text, not json'
+
+
+def test_raw_body_text_preserves_unicode_escapes() -> None:
+    """JSON unicode escapes must not be decoded; show exact stored bytes."""
+    raw = b'{"key":"\\u0041"}'
+    evidence = _evidence_with_raw(raw)
+    assert raw_body_text(evidence) == '{"key":"\\u0041"}'
