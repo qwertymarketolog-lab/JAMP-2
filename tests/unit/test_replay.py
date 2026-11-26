@@ -750,7 +750,14 @@ def test_moex_replay_uses_first_valid_marketdata_candidate() -> None:
             }
         }
     ).encode()
-    record = evidence(
+    catalog = evidence(
+        "evidence-moex-catalog",
+        "moex.iss",
+        "https://iss.moex.com/iss/securities.json",
+        b'{"securities":{"columns":["secid"],"data":[["SBER"]]}}',
+        claim,
+    )
+    marketdata = evidence(
         "evidence-moex-multiple-candidates",
         "moex.iss",
         "https://iss.moex.com/iss/marketdata.json",
@@ -766,7 +773,7 @@ def test_moex_replay_uses_first_valid_marketdata_candidate() -> None:
 
     derived = replay_module._parse_raw_source_value(
         source,
-        [record],
+        [catalog, marketdata],
         claim,
         {},
     )
