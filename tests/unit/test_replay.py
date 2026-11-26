@@ -735,3 +735,61 @@ def test_replay_rejects_unknown_source_policy_version() -> None:
     result = replay_verdict(multi_source_verdict(snapshot), multi_source_records())
     assert result["replay_status"] == "INCONCLUSIVE"
     assert result["reason_code"] == "SOURCE_POLICY_VERSION_UNSUPPORTED"
+
+
+def test_moex_replay_uses_first_valid_marketdata_candidate() -> None:
+    claim = claim_snapshot()
+    raw = json.dumps(
+        {
+            "marketdata": {
+                "columns": ["SECID", "LAST", "BOARDID"],
+                "data": [
+                    ["SBER", 100.0, "TQBR"],
+                    ["SBER", 105.0, "TQTF"],
+                ],
+            }
+        }
+    ).encode()
+    record = evidence(
+        "evidence-moex-multiple-candidates",
+        "moex.iss",
+        "https://iss.moex.com/iss/marketdata.json",
+        raw,
+        claim,
+    )
+    source = SourceSpec(
+        "moex",
+        "moex.iss",
+        "iss.moex.com",
+        "moex-iss-adapter-v1",
+    )
+
+    derived = replay_module._parse_raw_source_value(
+        source,
+        [record],
+        claim,
+        {},
+    )
+
+    assert derived == (100.0, ("SBER",))
+
+
+def test_replay_rejects_unknown_adapter_even_when_snapshot_matches() -> None:
+    records = multi_source_records()
+    snapshot = multi_source_policy_snapshot()
+    required_sources = snapshot["policy"]["required_sources"]
+    source = next(item for item in required_sources if item["provider_id"] == "source-a")
+    source["adapter_version"] = "unregistered-adapter-v99"
+    records[0] = replace(
+        records[0],
+        provider_adapter_version="unregistered-adapter-v99",
+    )
+    original = multi_source_verdict(snapshot)
+
+    reason = replay_module._historical_validity_reason(
+        original,
+        records,
+        snapshot,
+    )
+
+    assert reason == "EVIDENCE_INTERPRETATION_VERSION_UNSUPPORTED"
