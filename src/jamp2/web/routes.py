@@ -12,6 +12,7 @@ from typing import Any
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi.encoders import jsonable_encoder
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from jinja2 import TemplateNotFound
@@ -151,7 +152,7 @@ def build_dashboard_router(
         try:
             payload = ClaimVerifyRequest.model_validate(await request.json())
         except (ValueError, ValidationError) as exc:
-            detail = exc.errors() if isinstance(exc, ValidationError) else "INVALID_JSON"
+            detail = jsonable_encoder(exc.errors()) if isinstance(exc, ValidationError) else "INVALID_JSON"
             return secure(JSONResponse(
                 {"error": "VALIDATION_ERROR", "detail": detail}, status_code=422
             ))
