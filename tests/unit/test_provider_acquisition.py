@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import socket
+import subprocess
 import urllib.error
 import uuid
 from dataclasses import replace
