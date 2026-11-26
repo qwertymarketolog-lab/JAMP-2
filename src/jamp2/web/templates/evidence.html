@@ -1,0 +1,25 @@
+{% extends "base.html" %}
+{% block title %}Evidence {{ record.evidence_id }} · JAMP 2{% endblock %}
+{% block content %}
+<p><a href="/">← Новая проверка</a></p><section class="panel"><p class="eyebrow">RAW SOURCE OBSERVATION</p><h1>Evidence</h1><dl class="details">
+<dt>Evidence ID</dt><dd class="mono">{{ record.evidence_id }}</dd><dt>Claim ID</dt><dd class="mono">{{ record.claim_id }}</dd>
+<dt>Provider</dt><dd>{{ record.provider }}</dd><dt>Source URL</dt><dd class="mono">{{ record.url }}</dd>
+<dt>HTTP status</dt><dd>{{ record.http_status if record.http_status is not none else "N/A" }}</dd><dt>Body complete</dt><dd>{{ record.body_complete }}</dd>
+</dl></section>
+<section class="panel integrity"><h2>Byte integrity</h2><p class="integrity-ok">✓ Byte integrity confirmed</p>
+<p class="mono">{{ record.raw_sha256 }}</p><p><strong>NOTE: integrity ≠ truth.</strong> SHA-256 confirms byte identity, not source truth.</p></section>
+<section class="panel"><h2>Raw body (decoded)</h2><pre class="raw-body">{{ raw_body_text }}</pre></section>
+<section class="panel"><h2>Distinct timestamps</h2><dl class="details">
+<dt>Captured at (server)</dt><dd>{{ record.captured_at_utc.isoformat() }}</dd>
+<dt>Fetched at</dt><dd>{{ record.fetched_at.isoformat() if record.fetched_at else "MISSING" }}</dd>
+<dt>Provider observed at</dt><dd>{{ record.provider_observed_at.isoformat() if record.provider_observed_at else "MISSING" }}</dd>
+<dt>Source date</dt><dd>{{ record.source_date if record.source_date else "MISSING" }}</dd>
+<dt>Legacy source timestamp</dt><dd>{{ record.source_timestamp if record.source_timestamp else "MISSING" }}</dd>
+</dl></section>
+<section class="panel"><h2>Versions and chain</h2><dl class="details">
+<dt>Canonicalization</dt><dd>{{ record.canonicalization_version }}</dd><dt>Parser</dt><dd>{{ record.parser_version }}</dd>
+<dt>Provider adapter</dt><dd>{{ record.provider_adapter_version }}</dd><dt>Hash schema</dt><dd>{{ record.hash_schema_version }}</dd>
+<dt>Parent hash</dt><dd class="mono">{{ record.parent_hash or "GENESIS" }}</dd>
+<dt>Record hash</dt><dd class="mono">{{ record.record_hash or "UNAVAILABLE" }}</dd>
+</dl></section>
+{% endblock %}

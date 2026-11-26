@@ -1,0 +1,22 @@
+{% extends "base.html" %}
+{% block title %}Вердикт {{ verdict.verdict_id }} · JAMP 2{% endblock %}
+{% block content %}
+<p><a href="/">← Новая проверка</a></p>
+<section class="panel"><p class="eyebrow">VERDICT</p><span class="status-badge {{ status_class }}">{{ verdict.status }}</span>
+<p>{{ status_text }}</p><dl class="details">
+<dt>Утверждение</dt><dd>{{ claim.get("text", "Claim snapshot unavailable") }}</dd>
+<dt>Объект</dt><dd>{{ claim.get("subject_kind", "UNKNOWN") }} / {{ claim.get("subject_identifier", "UNKNOWN") }}</dd>
+<dt>Ожидаемое значение</dt><dd>{{ claim.get("expected_value", "UNKNOWN") }} {{ claim.get("unit", "") }}</dd>
+<dt>Claim ID</dt><dd class="mono">{{ verdict.claim_id }}</dd><dt>Verdict ID</dt><dd class="mono">{{ verdict.verdict_id }}</dd>
+<dt>Policy</dt><dd>{{ verdict.policy_id }} · {{ verdict.policy_version }}</dd><dt>Code version</dt><dd class="mono">{{ verdict.code_version }}</dd>
+<dt>Decided at</dt><dd>{{ verdict.decided_at_utc.isoformat() }}</dd></dl>
+<h2>Причины</h2><ul>{% for reason in verdict.reason_codes %}<li class="mono">{{ reason }}</li>{% endfor %}</ul><p>{{ verdict.explanation }}</p></section>
+<section class="panel"><h2>Evidence Ledger</h2>{% for record in evidence_records %}
+<article class="evidence-row"><strong>{{ record.provider }}</strong>
+<span class="muted">HTTP {{ record.http_status if record.http_status is not none else "N/A" }} · body_complete={{ record.body_complete }}</span>
+<p class="mono">{{ record.evidence_id }}</p><p class="mono">SHA-256: {{ record.raw_sha256 }}</p>
+<a href="/evidence/{{ record.evidence_id }}">Открыть исходное наблюдение →</a></article>{% endfor %}</section>
+<section class="panel"><h2>Replay</h2><p class="muted">Расчёт по сохранённым записям, без обращения к провайдерам.</p>
+<button type="button" class="secondary" data-replay-id="{{ verdict.verdict_id }}">Повторить вердикт без сети</button>
+<pre id="replay-result" class="result" aria-live="polite" hidden></pre><p id="replay-error" class="error" role="alert" hidden></p></section>
+{% endblock %}
