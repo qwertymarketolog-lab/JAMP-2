@@ -8,6 +8,7 @@ import json
 import uuid
 from dataclasses import replace
 from datetime import UTC, datetime
+from html import unescape
 from typing import Any
 
 import httpx
@@ -93,7 +94,7 @@ def test_dashboard_renders_home_verdict_evidence_and_static_assets() -> None:
         assert evidence_page.status_code == 200
         assert "Byte integrity confirmed" in evidence_page.text
         assert "integrity ≠ truth" in evidence_page.text
-        assert json.dumps({"bitcoin": {"usd": 60974}}, indent=2) in evidence_page.text
+        assert json.dumps({"bitcoin": {"usd": 60974}}, indent=2) in unescape(evidence_page.text)
         assert static.status_code == 200 and "status-ambiguous" in static.text
     asyncio.run(run())
 
@@ -191,6 +192,7 @@ class DashboardStubProvider:
         assert claim.subject_identifier == "SBER"
         raw_market = b'{"marketdata":{"columns":["SECID","LAST"],"data":[["SBER",300]]}}'
         raw_catalog = b'{"securities":{"columns":["secid"],"data":[["SBER"]]}}'
+        observed_at = datetime.now(UTC)
         return ProviderResult(
             "E4_VERIFIED",
             {
@@ -207,6 +209,8 @@ class DashboardStubProvider:
                     "url": "https://iss.moex.com/iss/marketdata.json",
                     "status_code": 200,
                     "body_complete": True,
+                    "fetched_at": observed_at.isoformat(),
+                    "provider_observed_at": observed_at.isoformat(),
                     "raw_body_base64": base64.b64encode(raw_market).decode("ascii"),
                     "sha256_body": compute_sha256(raw_market),
                 },
@@ -215,6 +219,8 @@ class DashboardStubProvider:
                     "url": "https://iss.moex.com/iss/securities.json",
                     "status_code": 200,
                     "body_complete": True,
+                    "fetched_at": observed_at.isoformat(),
+                    "provider_observed_at": observed_at.isoformat(),
                     "raw_body_base64": base64.b64encode(raw_catalog).decode("ascii"),
                     "sha256_body": compute_sha256(raw_catalog),
                 },
