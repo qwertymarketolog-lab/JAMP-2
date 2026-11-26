@@ -470,7 +470,7 @@ def test_008_downgrade_blocks_populated_v2_metadata_without_data_loss(
     with pytest.raises(RuntimeError, match="v2 evidence or verification_mode metadata"):
         command.downgrade(config, "007_pending_lease")
 
-    assert asyncio.run(_current_revision(database_url)) == "008_source_metadata"
+    assert asyncio.run(_current_revision(database_url)) == "009_verdict_policy_snapshot"
     assert asyncio.run(_count(database_url, "evidence")) == 1
     assert asyncio.run(_count(database_url, "verdicts")) == 1
 
